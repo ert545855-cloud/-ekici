@@ -1,0 +1,31 @@
+{
+  "name": "yolda-kaldik",
+  "version": "1.0.0",
+  "description": "Yolda Kaldık — çekici ve yol yardım platformu (müşteri uygulaması, çekici paneli, yönetim paneli)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ert545855-cloud/-ekici.git"
+  },
+  "license": "UNLICENSED",
+  "bugs": {
+    "url": "https://github.com/ert545855-cloud/-ekici/issues"
+  },
+  "homepage": "https://github.com/ert545855-cloud/-ekici#readme",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "express": "^5.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "leaflet": "^1.9.4",
+    "socket.io": "^4.8.4",
+    "web-push": "^3.6.7"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "private": true
+}

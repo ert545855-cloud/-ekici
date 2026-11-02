@@ -1,0 +1,17 @@
+{
+  "name": "Yolda Kaldık Çekici Paneli",
+  "short_name": "YK Çekici",
+  "description": "Kurtarma taleplerini al, müşteriye canlı konum paylaş.",
+  "start_url": "/cekici",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b2b33",
+  "theme_color": "#0b2b33",
+  "lang": "tr",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
