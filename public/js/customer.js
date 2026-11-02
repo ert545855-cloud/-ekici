@@ -1,6 +1,6 @@
 // Müşteri uygulaması
 (function () {
-  const { $, $$, h, I, api, auth, tl, dt, phoneFmt, initials, statusBadge, toast, fail, modal, confirmBox, perms } = YK;
+  const { $, $$, h, I, svcImg, api, auth, tl, dt, phoneFmt, initials, statusBadge, toast, fail, modal, confirmBox, perms } = YK;
   const app = $('#app');
   const LS = {
     get(k, d) { try { return JSON.parse(localStorage.getItem('yk-m:' + k)) ?? d; } catch { return d; } },
@@ -255,7 +255,7 @@
       const e = etaFor(el.dataset.s);
       const tag = el.querySelector('.eta');
       if (!tag) return;
-      tag.textContent = e ? `${e} dk` : 'Yoğun';
+      tag.innerHTML = e ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>${e} dk` : 'Yoğun';
       tag.classList.toggle('none', !e);
     });
   }
@@ -277,8 +277,9 @@
   const svcCard = (k, s) => `
     <button class="svc" data-s="${k}">
       <span class="eta none">…</span>
-      <span class="ico">${I['svc_' + k]}</span>
-      <span><span class="name">${h(s.name.toLocaleUpperCase('tr-TR'))}</span><br><span class="desc">${h(s.desc)}</span></span>
+      <span class="pic">${svcImg(k)}</span>
+      <span class="name">${h(s.name.toLocaleUpperCase('tr-TR'))}</span>
+      <span class="desc">${h(s.desc)}</span>
     </button>`;
 
   function sheetIdle() {
@@ -295,8 +296,10 @@
       <div class="services">${Object.entries(S.cfg.services).map(([k, s]) => svcCard(k, s)).join('')}</div>
       <h2 style="margin:20px 0 10px;font-size:17px">Acil durumlarda yanınızdayız</h2>
       <div class="carousel">
-        <div class="banner"><div class="big">%30<small>'a varan</small></div><div class="cap">İLK KEZ KULLANANLARA · ILK30</div>
-          <svg class="art" viewBox="0 0 48 48" fill="none" stroke="var(--brand-2)" stroke-width="1.6">${I.svc_oto.replace(/<\/?svg[^>]*>/g, '')}</svg></div>
+        <div class="banner promo">
+          <div class="promo-top"><div><div class="big">%30<small>'a varan</small></div><div class="tiny bold" style="color:var(--brand-2);margin-top:2px">Kod: ILK30</div></div><img src="/img/promo-tow.png" alt="" draggable="false"></div>
+          <div class="cap"><span class="pc">%</span>İLK KEZ KULLANANLARA İNDİRİM</div>
+        </div>
         <div class="banner dark"><div class="big">7/24</div><div class="cap">CANLI TAKİP · SİGORTALI TAŞIMA</div>
           <svg class="art" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="1.2">${I.shield.replace(/<\/?svg[^>]*>/g, '')}</svg></div>
         <div class="banner amber"><div class="big">${u.credits ? tl(u.credits) : '250 TL'}</div><div class="cap">${u.credits ? 'KURTARMA ÇEKİNİZ HAZIR' : 'HER DAVETE KURTARMA ÇEKİ'}</div>
@@ -375,7 +378,7 @@
       <div class="row" style="margin:2px 0 10px">
         <button class="icon-btn" id="rqBack" style="box-shadow:none;background:var(--chip)">${I.back}</button>
         <div class="grow"><div class="bold" style="font-size:17px">${h(s.name)}</div><div class="small muted">${h(s.desc)}</div></div>
-        <span class="ico" style="width:44px;height:44px;color:var(--text)">${I['svc_' + d.service]}</span>
+        <span class="thumb">${svcImg(d.service)}</span>
       </div>
       ${!s.needsDropoff ? `<div class="chips" style="padding-top:0">${Object.values(S.cfg.roadside).map((r) => `<button class="chip ${d.sub === r.key ? 'on' : ''}" data-sub="${r.key}">${h(r.name)} · ${tl(r.price)}</button>`).join('')}</div>` : ''}
       <div class="list" style="box-shadow:none;border:1.5px solid var(--line);margin-top:6px">
@@ -691,7 +694,7 @@
     el.innerHTML = `<div class="page"><h1>Kurtarmalarım</h1><div id="jl" class="muted">Yükleniyor…</div></div>`;
     const r = await api('/jobs').catch(() => ({ jobs: [] }));
     $('#jl').innerHTML = r.jobs.length
-      ? `<div class="list">${r.jobs.map((j, i) => `<button class="li" data-i="${i}"><span class="lic">${I['svc_' + j.service]}</span><span class="grow"><span class="row between"><b>${h(S.cfg.services[j.service]?.name || j.service)}</b><b>${tl(j.price.total)}</b></span><span class="row between small muted" style="margin-top:2px"><span class="ellipsis">${dt(j.createdAt)} · ${j.no}</span>${statusBadge(j.status)}</span></span></button>`).join('')}</div>`
+      ? `<div class="list">${r.jobs.map((j, i) => `<button class="li" data-i="${i}"><span class="lic pic-lic">${svcImg(j.service)}</span><span class="grow"><span class="row between"><b>${h(S.cfg.services[j.service]?.name || j.service)}</b><b>${tl(j.price.total)}</b></span><span class="row between small muted" style="margin-top:2px"><span class="ellipsis">${dt(j.createdAt)} · ${j.no}</span>${statusBadge(j.status)}</span></span></button>`).join('')}</div>`
       : `<div class="empty">${I.truck}<p><b>Henüz kurtarma talebiniz yok</b><br>Yolda kalırsanız tek dokunuşla çekici çağırabilirsiniz.</p><button class="btn sm" id="goHome">Çekici çağır</button></div>`;
     $('#goHome') && ($('#goHome').onclick = () => setTab('home'));
     $$('#jl [data-i]').forEach((b) => (b.onclick = () => jobDetail(r.jobs[+b.dataset.i])));

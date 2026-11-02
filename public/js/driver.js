@@ -1,6 +1,6 @@
 // Çekici paneli
 (function () {
-  const { $, $$, h, I, api, auth, tl, dt, d8, phoneFmt, initials, statusBadge, toast, fail, modal, confirmBox, perms } = YK;
+  const { $, $$, h, I, svcImg, api, auth, tl, dt, d8, phoneFmt, initials, statusBadge, toast, fail, modal, confirmBox, perms } = YK;
   const app = $('#app');
   const LS = {
     get(k, d) { try { return JSON.parse(localStorage.getItem('yk-c:' + k)) ?? d; } catch { return d; } },
@@ -219,7 +219,7 @@
     S.offers.forEach((o) => L.marker([o.pickup.lat, o.pickup.lng], { icon: YK.pinIcon('amber') }).addTo(S.offerLayer).on('click', () => showOffer(o, false)));
     setSheet(`
       <div class="row between" style="margin:2px 0 10px"><div><b style="font-size:17px">${S.offers.length ? `${S.offers.length} açık talep` : 'Talep bekleniyor…'}</b><div class="small muted">Yeni talepler sesli bildirimle gelir</div></div><button class="btn sm ghost" id="refOff">Yenile</button></div>
-      ${S.offers.length ? `<div class="list" style="box-shadow:none;border:1.5px solid var(--line)">${S.offers.map((o, i) => `<button class="li" data-o="${i}"><span class="lic">${I['svc_' + o.service]}</span><span class="grow"><span class="row between"><b>${h(S.cfg.services[o.service].name)}</b><b style="color:var(--brand-2)">${tl(o.price.total)}</b></span><span class="small muted ellipsis" style="display:block">${o.distanceToPickup != null ? o.distanceToPickup + ' km · ' : ''}${h(o.pickup.address)}</span></span></button>`).join('')}</div>`
+      ${S.offers.length ? `<div class="list" style="box-shadow:none;border:1.5px solid var(--line)">${S.offers.map((o, i) => `<button class="li" data-o="${i}"><span class="lic pic-lic">${svcImg(o.service)}</span><span class="grow"><span class="row between"><b>${h(S.cfg.services[o.service].name)}</b><b style="color:var(--brand-2)">${tl(o.price.total)}</b></span><span class="small muted ellipsis" style="display:block">${o.distanceToPickup != null ? o.distanceToPickup + ' km · ' : ''}${h(o.pickup.address)}</span></span></button>`).join('')}</div>`
         : '<div class="radar" style="width:90px;height:90px"><i></i><i></i><i></i><div class="core" style="inset:26px">' + I.tow + '</div></div>'}`);
     $('#refOff').onclick = loadOffers;
     $$('[data-o]').forEach((b) => (b.onclick = () => showOffer(S.offers[+b.dataset.o], false)));
@@ -232,7 +232,7 @@
     const s = S.cfg.services[o.service];
     return `
       <div class="row between"><span class="badge amber">YENİ TALEP · ${o.no}</span><span class="badge">${o.payment === 'card' ? 'Kart (POS)' : 'Nakit'}</span></div>
-      <div class="row" style="margin:12px 0 4px"><span class="ico" style="width:52px;height:52px;color:var(--text)">${I['svc_' + o.service]}</span><div class="grow"><b style="font-size:19px">${h(s.name)}${o.sub ? ' · ' + h(S.cfg.roadside[o.sub]?.name || '') : ''}</b><div class="small muted">${o.vehicle?.plate ? h(o.vehicle.plate) + ' · ' : ''}${h(o.vehicle?.model || 'Araç bilgisi yok')}</div></div><div class="center"><b style="font-size:22px;color:var(--brand-2)">${tl(o.price.total)}</b><div class="tiny muted">kazanç</div></div></div>
+      <div class="row" style="margin:12px 0 4px"><span class="thumb">${svcImg(o.service)}</span><div class="grow"><b style="font-size:19px">${h(s.name)}${o.sub ? ' · ' + h(S.cfg.roadside[o.sub]?.name || '') : ''}</b><div class="small muted">${o.vehicle?.plate ? h(o.vehicle.plate) + ' · ' : ''}${h(o.vehicle?.model || 'Araç bilgisi yok')}</div></div><div class="center"><b style="font-size:22px;color:var(--brand-2)">${tl(o.price.total)}</b><div class="tiny muted">kazanç</div></div></div>
       <div class="card flat small" style="margin-top:10px">
         <div class="row"><span style="color:var(--brand-2)">${I.pin}</span><span class="grow"><b>${o.distanceToPickup != null ? o.distanceToPickup + ' km uzakta' : 'Alış'}</b><br>${h(o.pickup.address)}</span></div>
         ${o.dropoff ? `<div class="row" style="margin-top:8px"><span>${I.nav}</span><span class="grow"><b>${o.distanceKm} km çekme</b><br>${h(o.dropoff.address)}</span></div>` : ''}
@@ -428,7 +428,7 @@
     $('#tabScreen').innerHTML = `<div class="page"><h1>İşlerim</h1><div id="jl" class="muted">Yükleniyor…</div></div>`;
     const r = await api('/jobs').catch(() => ({ jobs: [] }));
     $('#jl').innerHTML = r.jobs.length
-      ? `<div class="list">${r.jobs.map((j) => `<div class="li"><span class="lic">${I['svc_' + j.service]}</span><span class="grow"><span class="row between"><b>${h(j.customer?.name || '')}</b><b>${tl(j.price.total)}</b></span><span class="row between small muted" style="margin-top:2px"><span class="ellipsis">${dt(j.createdAt)} · ${j.no}${j.rating ? ' · ' + '★'.repeat(j.rating.stars) : ''}</span>${statusBadge(j.status)}</span></span></div>`).join('')}</div>`
+      ? `<div class="list">${r.jobs.map((j) => `<div class="li"><span class="lic pic-lic">${svcImg(j.service)}</span><span class="grow"><span class="row between"><b>${h(j.customer?.name || '')}</b><b>${tl(j.price.total)}</b></span><span class="row between small muted" style="margin-top:2px"><span class="ellipsis">${dt(j.createdAt)} · ${j.no}${j.rating ? ' · ' + '★'.repeat(j.rating.stars) : ''}</span>${statusBadge(j.status)}</span></span></div>`).join('')}</div>`
       : `<div class="empty">${I.list}<p>Henüz iş almadınız.<br>Çevrimiçi olun, talepler size gelsin.</p></div>`;
   }
 

@@ -379,5 +379,8 @@
   }
   applyTheme();
 
-  window.YK = { $, $$, h, I, api, auth, tl, dt, d8, phoneFmt, initials, STATUS, statusBadge, toast, fail, modal, confirmBox, perms, getPosition, registerSW, enablePush, showLocalNotification, connectSocket, createMap, initGoogle, gmapsReady, toggleMapType, mapTypeButton, truckIcon, pinIcon, meIcon, route, geocode, resolvePlace, reverseGeocode, alertSound, applyTheme };
+  // Hizmet görselleri (müşteri tasarımındaki araç çizimleri)
+  const svcImg = (k, cls = '') => `<img class="svc-img ${cls}" src="/img/svc-${k}.png" alt="" draggable="false">`;
+
+  window.YK = { $, $$, h, I, svcImg, api, auth, tl, dt, d8, phoneFmt, initials, STATUS, statusBadge, toast, fail, modal, confirmBox, perms, getPosition, registerSW, enablePush, showLocalNotification, connectSocket, createMap, initGoogle, gmapsReady, toggleMapType, mapTypeButton, truckIcon, pinIcon, meIcon, route, geocode, resolvePlace, reverseGeocode, alertSound, applyTheme };
 })();

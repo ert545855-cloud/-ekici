@@ -394,3 +394,31 @@ a.btn { text-decoration: none; }
 @keyframes shake { 25% { transform: translateX(-8px); } 50% { transform: translateX(8px); } 75% { transform: translateX(-4px); } }
 .pin-input { position: absolute; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
 .maptype-btn { position: absolute; right: 14px; z-index: 450; }
+
+/* Hizmet kartları — araç görselli (tasarım referansı) */
+:root { --stage: transparent; --tile: #f1f1ef; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) { --stage: #e9ece9; --tile: #1c2c30; } }
+:root[data-theme='dark'] { --stage: #e9ece9; --tile: #1c2c30; }
+.services { gap: 12px; }
+.svc { background: var(--tile); align-items: center; text-align: center; padding: 12px 10px 14px; gap: 2px; min-height: 0; border-radius: 20px; }
+.svc .pic { width: 100%; height: 92px; display: grid; place-items: center; background: var(--stage); border-radius: 14px; margin-bottom: 6px; }
+.svc .pic img { max-width: 86%; max-height: 82px; object-fit: contain; filter: drop-shadow(0 8px 8px rgba(0, 0, 0, .10)); pointer-events: none; user-select: none; }
+.svc[data-s='yol'] .pic img { max-height: 74px; }
+.svc .name { font-size: 16.5px; letter-spacing: .005em; line-height: 1.15; }
+.svc .desc { font-size: 13px; color: var(--text); opacity: .78; }
+.svc .eta { top: 10px; right: 10px; display: inline-flex; align-items: center; gap: 3px; padding: 4px 8px 4px 6px; box-shadow: 0 2px 6px rgba(24, 180, 95, .35); z-index: 1; }
+.svc .eta svg { width: 13px; height: 13px; }
+.svc .eta.none { box-shadow: none; padding: 4px 8px; }
+.thumb { width: 64px; height: 46px; display: grid; place-items: center; background: var(--stage); border-radius: 12px; flex: none; }
+.thumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.lic.pic-lic { background: var(--tile); width: 48px; }
+.pic-lic .svc-img { max-width: 42px; max-height: 32px; object-fit: contain; }
+
+/* Kampanya kartı */
+.banner.promo { background: #f3f4f0; color: #0f1f23; justify-content: space-between; padding: 14px 14px 12px; }
+.promo-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.promo-top .big { font-size: 54px; white-space: nowrap; }
+.promo-top .big small { font-size: 13px; font-weight: 700; color: var(--brand-2); }
+.promo-top img { width: 56%; max-width: 190px; height: auto; pointer-events: none; }
+.banner.promo .cap { margin-top: 8px; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; padding: 4px 10px 4px 4px; background: #0f1f23; }
+.banner.promo .cap .pc { width: 20px; height: 20px; border-radius: 50%; background: var(--brand); display: grid; place-items: center; font-size: 12px; }
