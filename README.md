@@ -59,7 +59,7 @@ Martı TAG mantığında çalışan çekici çağırma uygulaması: müşteri ha
 - Acil düğmesi: 112 / 155 / 110 / 156, operatöre okunacak konum, acil kişilere konum SMS'i, “Kaza yaptım, çekici çağır”
 
 **Fiyatlandırma**
-- Km başına: binek (oto çekici) **200 TL**, ağır vasıta / tır **300 TL**, motosiklet **150 TL** + açılış ücreti
+- Km başına: binek (oto çekici) **200 TL**, ağır vasıta / tır **300 TL**, motosiklet **150 TL**; açılış ücreti yok
 - Mesafe gerçek yol rotasından hesaplanır (Mapbox Directions → OSRM; ikisi de yoksa tahmini)
 - 22:00–06:00 gece tarifesi +%20
 - İsteğe bağlı **kasko güvencesi: +350 TL** (indirim kodundan etkilenmez; çekici kazancına dahil edilmez, yönetim panelinde ayrı raporlanır)

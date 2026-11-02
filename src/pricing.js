@@ -1,9 +1,9 @@
 // Hizmetler, fiyatlandırma ve indirim kodu doğrulama
 const SERVICES = {
-  // Km ücretleri: binek 200 TL, ağır vasıta/tır 300 TL, motosiklet 150 TL (ortam değişkeniyle değiştirilebilir)
-  oto: { key: 'oto', name: 'Oto Çekici', desc: 'Binek araçlar için kurtarma', base: Number(process.env.PRICE_BASE_OTO || 1500), perKm: Number(process.env.PRICE_KM_OTO || 200), needsDropoff: true, eta: 1 },
-  agir: { key: 'agir', name: 'Ağır Vasıta', desc: 'Kamyon ve tırlar için çekme', base: Number(process.env.PRICE_BASE_AGIR || 4500), perKm: Number(process.env.PRICE_KM_AGIR || 300), needsDropoff: true, eta: 1.4 },
-  moto: { key: 'moto', name: 'Motosiklet', desc: 'Özel motor platformu', base: Number(process.env.PRICE_BASE_MOTO || 900), perKm: Number(process.env.PRICE_KM_MOTO || 150), needsDropoff: true, eta: 0.9 },
+  // Km ücretleri: binek 200 TL, ağır vasıta/tır 300 TL, motosiklet 150 TL; açılış ücreti yok (ortam değişkeniyle değiştirilebilir)
+  oto: { key: 'oto', name: 'Oto Çekici', desc: 'Binek araçlar için kurtarma', base: Number(process.env.PRICE_BASE_OTO || 0), perKm: Number(process.env.PRICE_KM_OTO || 200), needsDropoff: true, eta: 1 },
+  agir: { key: 'agir', name: 'Ağır Vasıta', desc: 'Kamyon ve tırlar için çekme', base: Number(process.env.PRICE_BASE_AGIR || 0), perKm: Number(process.env.PRICE_KM_AGIR || 300), needsDropoff: true, eta: 1.4 },
+  moto: { key: 'moto', name: 'Motosiklet', desc: 'Özel motor platformu', base: Number(process.env.PRICE_BASE_MOTO || 0), perKm: Number(process.env.PRICE_KM_MOTO || 150), needsDropoff: true, eta: 0.9 },
   yol: { key: 'yol', name: 'Yol Yardım', desc: 'Akü, yakıt, lastik, çilingir', base: 0, perKm: 0, needsDropoff: false, eta: 0.8 },
 };
 
@@ -75,7 +75,7 @@ function quote(db, { service, sub, pickup, dropoff, code, user, at, kasko, dista
   if (s.needsDropoff) {
     if (!dropoff || typeof dropoff.lat !== 'number') throw new Error('Varış noktası gerekli');
     distanceKm = Math.max(1, Math.round((routeKm || roadKm(pickup, dropoff)) * 10) / 10);
-    lines.push({ label: 'Açılış ücreti', amount: s.base });
+    if (s.base) lines.push({ label: 'Açılış ücreti', amount: s.base });
     lines.push({ label: `Mesafe (${distanceKm} km × ${s.perKm} TL)`, amount: Math.round(distanceKm * s.perKm) });
     subtotal = s.base + Math.round(distanceKm * s.perKm);
   } else {
