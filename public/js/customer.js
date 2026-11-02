@@ -60,17 +60,37 @@
             ${mode === 'register' ? `<label class="field"><span>Davet kodu (isteğe bağlı)</span><input name="referral" value="${h(ref)}" placeholder="Örn. YKAB12C" style="text-transform:uppercase"></label>` : ''}
             <button class="btn" type="submit">${mode === 'login' ? 'Giriş yap' : 'Hesabımı oluştur'}</button>
           </form>
+          ${mode === 'login' ? '<button class="center small bold" id="forgot" style="width:100%;color:var(--brand-2)">Şifremi unuttum</button>' : '<p class="tiny muted center" style="margin:0">Kayıt için telefonunuza SMS ile doğrulama kodu gönderilir.</p>'}
           <p class="center small muted">Çekici / kurtarma firması mısınız?<br><a href="/cekici"><b>Çekici hesabı açın →</b></a></p>
         </div>
       </div>`;
     $$('#seg button').forEach((b) => (b.onclick = () => renderAuth(b.dataset.m)));
+    $('#forgot') && ($('#forgot').onclick = async () => {
+      const r = await YK.forgotPassword('customer');
+      if (!r) return;
+      auth.token = r.token;
+      S.user = r.user;
+      toast('Şifreniz yenilendi ✅');
+      LS.get('permsDone', false) ? renderMain() : renderPerms();
+    });
     $('#f').onsubmit = async (e) => {
       e.preventDefault();
       const fd = Object.fromEntries(new FormData(e.target));
       const btn = e.target.querySelector('button');
       btn.disabled = true;
       try {
-        const r = await api(mode === 'login' ? '/auth/login' : '/auth/register', { body: { ...fd, role: 'customer' } });
+        let r;
+        if (mode === 'login') r = await api('/auth/login', { body: { ...fd, role: 'customer' } });
+        else {
+          if (!fd.name || fd.name.trim().length < 2) throw new Error('Ad soyad girin');
+          if ((fd.password || '').length < 6) throw new Error('Şifre en az 6 karakter olmalı');
+          r = await YK.otpModal({
+            phone: fd.phone,
+            request: () => api('/auth/otp', { body: { phone: fd.phone, role: 'customer', purpose: 'register' } }),
+            submit: (otp) => api('/auth/register', { body: { ...fd, role: 'customer', otp } }),
+          });
+          if (!r) return;
+        }
         if (r.user.role === 'driver') { auth.token = null; throw new Error('Bu bir çekici hesabı. Çekici paneline yönlendiriliyorsunuz.'); }
         if (r.user.role === 'admin') { location.href = '/admin'; return; }
         auth.token = r.token;
@@ -126,6 +146,7 @@
         <div class="topbar">
           <div class="brand"><span class="logo">${I.tow}</span>YOLDA KALDIK</div>
           <div class="grow"></div>
+          <button class="icon-btn sos-btn" id="sosBtn" aria-label="Acil durum">${I.sos}</button>
           <button class="icon-btn" id="bellBtn" aria-label="Bildirimler">${I.bell}<span class="dot hidden" id="bellDot"></span></button>
         </div>
         <div class="center-pin" id="cpin"><div class="label" id="cpinLabel"><b>Alış</b>Konum alınıyor…</div><div class="head"></div><div class="stick"></div><div class="shadow"></div></div>
@@ -141,6 +162,8 @@
       </nav>`;
     $$('#tabs button').forEach((b) => (b.onclick = () => setTab(b.dataset.t)));
     $('#bellBtn').onclick = openNotifications;
+    $('#sosBtn').onclick = openSOS;
+    loadScheduled();
     $('#locBtn').onclick = locateMe;
     initMap();
     connect();
@@ -288,6 +311,7 @@
     S.jobLayer.clearLayers();
     setSheet(`
       <div class="promo-strip"><div class="t">Arkadaşını davet et, <span>250 TL kurtarma çeki</span> kazan!</div><button id="inviteBtn">Davet et</button></div>
+      ${(S.scheduled || []).map((j) => `<button class="sched-banner" data-sj="${j.id}">${I.cal}<span class="grow"><b>Randevulu: ${h(fmtWhen(j.scheduledAt))}</b><br><span class="muted">${h(S.cfg.services[j.service]?.name)} · ${h(j.pickup.address || '')}</span></span><span class="chev">${I.chev}</span></button>`).join('')}
       <button class="search" id="destBtn">${I.search}<span class="grow ellipsis">${S.draft.dropoff ? h(S.draft.dropoff.address) : 'Nereye çekilecek?'}</span>${S.draft.dropoff ? `<span id="clrDest" style="color:var(--muted)">${I.x}</span>` : ''}</button>
       <div class="chips">
         ${addrs.map((a, i) => `<button class="chip" data-a="${i}">${I.pin}${h(a.label)}</button>`).join('')}
@@ -307,6 +331,7 @@
       </div>
       <div style="height:6px"></div>`);
     $('#inviteBtn').onclick = shareInvite;
+    $$('[data-sj]').forEach((b) => (b.onclick = () => jobDetail(S.scheduled.find((x) => x.id === b.dataset.sj))));
     $('#destBtn').onclick = (e) => {
       if (e.target.closest('#clrDest')) { S.draft.dropoff = null; return sheetIdle(); }
       openDestSearch((p) => { S.draft.dropoff = p; sheetIdle(); toast('Varış noktası seçildi', 'Şimdi hizmet türünü seçin'); });
@@ -390,6 +415,8 @@
         <label class="field grow"><span>Marka / model</span><input id="vModel" value="${h(d.vehicle.model)}" placeholder="Örn. Renault Clio"></label>
       </div>
       <label class="field" style="margin-top:10px"><span>Çekiciye not (isteğe bağlı)</span><input id="vNote" value="${h(d.note)}" placeholder="Örn. Otoparkın -2. katındayım, vites P'de"></label>
+      <div style="margin-top:12px" class="seg" id="whenSeg"><button data-w="now" class="${!d.scheduledAt ? 'on' : ''}">Hemen</button><button data-w="later" class="${d.scheduledAt ? 'on' : ''}">${I.cal.replace('<svg', '<svg width="16" height="16" style="vertical-align:-3px"')} İleri tarih</button></div>
+      <label class="field ${d.scheduledAt ? '' : 'hidden'}" id="whenBox" style="margin-top:10px"><span>Çekici ne zaman gelsin?</span><input type="datetime-local" id="whenIn" value="${h(d.scheduledAt ? toLocalInput(new Date(d.scheduledAt)) : '')}" min="${toLocalInput(new Date(Date.now() + 31 * 60000))}" max="${toLocalInput(new Date(Date.now() + 14 * 86400000))}"></label>
       <div style="margin-top:12px" class="seg" id="paySeg"><button data-p="cash" class="${d.payment === 'cash' ? 'on' : ''}">Nakit</button><button data-p="card" class="${d.payment === 'card' ? 'on' : ''}">Kredi kartı (POS)</button></div>
       <div class="row" style="margin-top:12px"><input class="input grow" id="codeIn" value="${h(d.code)}" placeholder="İndirim kodu" style="text-transform:uppercase"><button class="btn sm ghost" id="codeBtn">${d.code ? 'Kaldır' : 'Uygula'}</button></div>
       <div id="qBox" class="price-lines" style="margin-top:12px"><div class="muted small">Fiyat hesaplanıyor…</div></div>
@@ -399,6 +426,15 @@
     $('#editPick').onclick = () => { S.mode = 'idle'; renderSheet(); panToPin(d.pickup); toast('Alış noktasını düzenleyin', 'Pini aracın olduğu yere getirip hizmeti tekrar seçin'); };
     $('#editDrop') && ($('#editDrop').onclick = () => openDestSearch((p) => { d.dropoff = p; sheetRequest(); drawDraft(); }, 'Aracınız nereye çekilecek?', 'request'));
     $$('[data-sub]').forEach((b) => (b.onclick = () => { d.sub = b.dataset.sub; sheetRequest(); }));
+    $$('#whenSeg button').forEach((b) => (b.onclick = () => {
+      if (b.dataset.w === 'now') { d.scheduledAt = null; sheetRequest(); return; }
+      const def = new Date(Date.now() + 24 * 3600000);
+      def.setMinutes(0, 0, 0);
+      def.setHours(9);
+      d.scheduledAt = def.toISOString();
+      sheetRequest();
+    }));
+    $('#whenIn').onchange = (e) => { if (e.target.value) { d.scheduledAt = new Date(e.target.value).toISOString(); loadQuote(); } };
     $$('#paySeg button').forEach((b) => (b.onclick = () => { d.payment = b.dataset.p; $$('#paySeg button').forEach((x) => x.classList.toggle('on', x === b)); }));
     $('#vPlate').oninput = (e) => (d.vehicle.plate = e.target.value.toUpperCase());
     $('#vModel').oninput = (e) => (d.vehicle.model = e.target.value);
@@ -415,7 +451,7 @@
   async function loadQuote(fromCode) {
     const d = S.draft;
     try {
-      const q = await api('/quote', { body: { service: d.service, sub: d.sub, pickup: d.pickup, dropoff: d.dropoff, code: d.code } });
+      const q = await api('/quote', { body: { service: d.service, sub: d.sub, pickup: d.pickup, dropoff: d.dropoff, code: d.code, scheduledAt: d.scheduledAt } });
       S.quote = q;
       if (q.codeError) {
         toast(q.codeError, '', true);
@@ -432,7 +468,7 @@
         <div class="pl total"><span>Toplam</span><span>${tl(q.total)}</span></div>`;
       const btn = $('#callBtn');
       btn.disabled = false;
-      btn.innerHTML = `${I.tow} Çekici çağır · ${tl(q.total)}`;
+      btn.innerHTML = d.scheduledAt ? `${I.cal} Randevu oluştur · ${tl(q.total)}` : `${I.tow} Çekici çağır · ${tl(q.total)}`;
     } catch (e) { fail(e); }
   }
 
@@ -442,9 +478,15 @@
     btn.disabled = true;
     try {
       LS.set('vehicle', d.vehicle);
-      const r = await api('/jobs', { body: { service: d.service, sub: d.sub, pickup: d.pickup, dropoff: d.dropoff, code: d.code, payment: d.payment, vehicle: d.vehicle, note: d.note } });
-      S.draft = { service: null, sub: 'aku', dropoff: null, code: '', payment: 'cash', note: '', vehicle: d.vehicle };
-      setJob(r.job);
+      const r = await api('/jobs', { body: { service: d.service, sub: d.sub, pickup: d.pickup, dropoff: d.dropoff, code: d.code, payment: d.payment, vehicle: d.vehicle, note: d.note, scheduledAt: d.scheduledAt } });
+      S.draft = { service: null, sub: 'aku', dropoff: null, code: '', payment: 'cash', note: '', vehicle: d.vehicle, scheduledAt: null };
+      if (r.job.status === 'scheduled') {
+        S.mode = 'idle';
+        S.jobLayer.clearLayers();
+        await loadScheduled();
+        renderSheet();
+        panToPin(r.job.pickup);
+      } else setJob(r.job);
       if (perms.notification() === 'prompt') {
         setTimeout(() => confirmBox('Bildirimleri açalım mı?', 'Uygulamayı kapatsanız bile çekici kabul ettiğinde ve geldiğinde haber verelim.', 'Bildirimleri aç').then((ok) => ok && YK.enablePush(S.cfg.vapidPublicKey).catch(fail)), 800);
       }
@@ -459,9 +501,11 @@
     } catch {}
   }
   function setJob(job) {
+    if (job && job.status === 'scheduled') { loadScheduled().then(() => S.mode === 'idle' && renderSheet()); return; }
     const prev = S.job;
     S.job = job;
     if (!job) return;
+    if (!prev || prev.id !== job.id) S.unreadChat = 0;
     if (['completed', 'cancelled', 'expired'].includes(job.status)) {
       S.mode = 'idle';
       S.job = null;
@@ -552,15 +596,24 @@
       </div>
       <div class="actions">
         <button class="act call" id="callDrv">${I.phone}Ara</button>
-        <a class="act" href="sms:0${h(d.phone || '')}" style="text-decoration:none;color:inherit">${I.msg}Mesaj</a>
+        <button class="act" id="chatBtn">${I.msg}Mesaj${S.unreadChat ? `<i class="cdot">${S.unreadChat}</i>` : ''}</button>
         ${['accepted', 'arrived'].includes(j.status) ? `<button class="act red" id="cancelBtn">${I.x}İptal</button>` : `<button class="act" id="shareBtn">${I.share}Paylaş</button>`}
       </div>
+      ${j.photos?.pickup?.length ? `<div style="margin-top:12px"><div class="tiny bold muted" style="margin-bottom:6px">YÜKLEME ÖNCESİ FOTOĞRAFLAR</div>${YK.photoStrip(j.photos.pickup)}</div>` : ''}
+      ${j.photos?.dropoff?.length ? `<div style="margin-top:10px"><div class="tiny bold muted" style="margin-bottom:6px">TESLİM FOTOĞRAFLARI</div>${YK.photoStrip(j.photos.dropoff)}</div>` : ''}
       <details style="margin-top:14px"><summary class="small bold" style="cursor:pointer">Talep detayı · ${j.no} · ${tl(j.price.total)}</summary>
         <div class="price-lines" style="margin-top:8px">${j.price.lines.map((l) => `<div class="pl"><span>${h(l.label)}</span><span>${tl(l.amount)}</span></div>`).join('')}
         ${j.price.discount ? `<div class="pl disc"><span>İndirim</span><span>−${tl(j.price.discount)}</span></div>` : ''}${j.price.credit ? `<div class="pl disc"><span>Kurtarma çeki</span><span>−${tl(j.price.credit)}</span></div>` : ''}
         <div class="pl total"><span>${j.payment === 'card' ? 'Kartla ödenecek' : 'Nakit ödenecek'}</span><span>${tl(j.price.total)}</span></div></div>
       </details>`);
     $('#callDrv').onclick = () => callNumber(d.phone, d.name);
+    $('#chatBtn').onclick = () => {
+      S.unreadChat = 0;
+      S.chatOpen = true;
+      $('#chatBtn .cdot')?.remove();
+      YK.openChat({ job: S.job, me: 'customer', socket: S.socket, onClose: () => (S.chatOpen = false) });
+    };
+    YK.bindPhotoStrips($('#sheetBody'));
     $('#cancelBtn') && ($('#cancelBtn').onclick = cancelJob);
     $('#shareBtn') && ($('#shareBtn').onclick = () => {
       const text = `Aracım ${d.plate} plakalı çekiciyle ${j.dropoff ? j.dropoff.address : ''} adresine çekiliyor. Tahmini varış ${j.eta || '?'} dk. — Yolda Kaldık`;
@@ -660,6 +713,41 @@
     else { try { await navigator.clipboard.writeText(text); } catch {} toast('Davet bağlantısı kopyalandı', S.user.referralCode); }
   }
 
+  // ---------------- Randevulu talepler ----------------
+  const fmtWhen = (s) => new Date(s).toLocaleString('tr-TR', { weekday: 'short', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+  const toLocalInput = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  async function loadScheduled() {
+    try { S.scheduled = (await api('/jobs')).jobs.filter((j) => j.status === 'scheduled').sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt)); } catch { S.scheduled = []; }
+  }
+
+  // ---------------- Acil durum ----------------
+  async function openSOS() {
+    const p = S.myPos || S.pickup || null;
+    const addr = p ? await YK.reverseGeocode(p).catch(() => '') : '';
+    const contacts = S.user.emergencyContacts || [];
+    const m = modal(`
+      <h3 style="color:var(--red)">Acil durum</h3>
+      <a class="sos-big" href="tel:112">${I.phone}<span class="grow">112 Acil Çağrı<br><span class="small" style="font-weight:600;opacity:.85">Yaralı varsa önce burayı arayın</span></span></a>
+      <div class="row" style="margin-top:8px"><a class="btn ghost sm" href="tel:155" style="flex:1">155 Polis</a><a class="btn ghost sm" href="tel:110" style="flex:1">110 İtfaiye</a><a class="btn ghost sm" href="tel:156" style="flex:1">156 Jandarma</a></div>
+      <div class="card flat small" style="margin-top:12px"><div class="tiny bold muted">KONUMUNUZ (operatöre okuyabilirsiniz)</div><b>${h(addr || 'Konum alınıyor…')}</b>${p ? `<div class="muted">${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}</div>` : ''}</div>
+      <button class="btn dark" id="sosShare" style="margin-top:12px">${I.share} Konumumu acil kişilerime gönder${contacts.length ? ` (${contacts.length})` : ''}</button>
+      <button class="btn" id="sosTow" style="margin-top:8px">${I.tow} Kaza yaptım, çekici çağır</button>
+      <p class="tiny muted center" style="margin-top:10px">${contacts.length ? contacts.map((c) => h(c.name)).join(', ') + ' bilgilendirilecek.' : 'Acil durum kişisi eklemediniz. Hesap → Acil durum kişilerim.'}</p>`);
+    $('#sosTow', m.el).onclick = () => { m.close(); setTab('home'); if (S.mode !== 'idle') return; if (p) panToPin(p, 16); setTimeout(() => startRequest('oto'), 400); };
+    $('#sosShare', m.el).onclick = async () => {
+      if (!contacts.length) { m.close(); setTab('account'); toast('Önce acil durum kişisi ekleyin'); return; }
+      try {
+        const r = await api('/sos', { body: { location: p ? { ...p, address: addr } : null } });
+        if (r.sent) toast('Konumunuz gönderildi ✅', `${r.sent} kişiye SMS gitti`);
+        else {
+          // SMS servisi yoksa telefonun kendi mesaj uygulamasıyla gönder
+          const nums = contacts.map((c) => '0' + c.phone).join(',');
+          location.href = `sms:${nums}${/iPhone|iPad/.test(navigator.userAgent) ? '&' : '?'}body=${encodeURIComponent(r.text)}`;
+        }
+      } catch (e) { fail(e); }
+    };
+  }
+
   // ---------------- Socket & bildirimler ----------------
   function connect() {
     S.socket = YK.connectSocket();
@@ -676,6 +764,15 @@
       if (terminal ? S.job && S.job.id === j.id : !S.job || S.job.id === j.id) setJob(j);
     });
     S.socket.on('job:driver', onDriverLoc);
+    S.socket.on('job:message', ({ jobId, message }) => {
+      if (!S.job || S.job.id !== jobId) return;
+      S.job.messages = [...(S.job.messages || []).filter((x) => x.id !== message.id), message];
+      if (S.chatOpen || message.from === 'customer') return;
+      S.unreadChat = (S.unreadChat || 0) + 1;
+      toast(`💬 ${message.name}`, message.text || '📷 Fotoğraf');
+      YK.showLocalNotification(`💬 ${message.name}`, message.text || 'Fotoğraf gönderdi');
+      if (S.mode === 'active' && S.tab === 'home') sheetActive();
+    });
   }
   async function refreshUnread() {
     try { const r = await api('/notifications'); S.unread = r.unread; $('#bellDot')?.classList.toggle('hidden', !r.unread); } catch {}
@@ -700,17 +797,27 @@
     $$('#jl [data-i]').forEach((b) => (b.onclick = () => jobDetail(r.jobs[+b.dataset.i])));
   }
   function jobDetail(j) {
+    if (!j) return;
     const m = modal(`
+      ${j.status === 'scheduled' ? `<div class="sched-banner">${I.cal}<span class="grow"><b>${h(fmtWhen(j.scheduledAt))}</b><br><span class="muted">Saatinden önce çekici atanacak, bildirim alacaksınız.</span></span></div>` : ''}
       <div class="row between"><h3>${h(S.cfg.services[j.service]?.name)} · ${j.no}</h3>${statusBadge(j.status)}</div>
       <div class="card flat small"><div class="row"><span style="color:var(--brand-2)">${I.pin}</span><span class="grow">${h(j.pickup.address)}</span></div>${j.dropoff ? `<div class="row" style="margin-top:8px"><span>${I.nav}</span><span class="grow">${h(j.dropoff.address)}</span></div>` : ''}</div>
       ${j.driver ? `<div class="driver-card" style="margin-top:12px"><div class="avatar">${initials(j.driver.name)}</div><div class="grow"><b>${h(j.driver.name)}</b><div class="small muted">${h(j.driver.vehicle || '')}</div></div><span class="plate">${h(j.driver.plate || '')}</span></div>` : ''}
       <h2 style="font-size:15px;margin:16px 0 6px">Zaman çizelgesi</h2>
       <div class="small">${j.timeline.map((t) => `<div class="row" style="padding:5px 0"><span class="live-dot" style="background:var(--brand)"></span><span class="grow">${h(t.note)}</span><span class="muted">${new Date(t.at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span></div>`).join('')}</div>
       <div class="price-lines" style="margin-top:12px">${j.price.lines.map((l) => `<div class="pl"><span>${h(l.label)}</span><span>${tl(l.amount)}</span></div>`).join('')}${j.price.discount ? `<div class="pl disc"><span>İndirim</span><span>−${tl(j.price.discount)}</span></div>` : ''}${j.price.credit ? `<div class="pl disc"><span>Kurtarma çeki</span><span>−${tl(j.price.credit)}</span></div>` : ''}<div class="pl total"><span>Toplam</span><span>${tl(j.price.total)}</span></div></div>
+      ${j.photos?.pickup?.length ? `<h2 style="font-size:15px;margin:16px 0 6px">Yükleme öncesi fotoğraflar</h2>${YK.photoStrip(j.photos.pickup, 72)}` : ''}
+      ${j.photos?.dropoff?.length ? `<h2 style="font-size:15px;margin:14px 0 6px">Teslim fotoğrafları</h2>${YK.photoStrip(j.photos.dropoff, 72)}` : ''}
+      ${j.status === 'scheduled' ? '<button class="btn danger" id="cancelSched" style="margin-top:14px">Randevuyu iptal et</button>' : ''}
       ${j.rating ? `<p class="center" style="color:var(--amber);font-size:22px;margin:12px 0 0">${'★'.repeat(j.rating.stars)}</p>` : ''}
       ${j.status === 'completed' && !j.rating ? '<button class="btn" id="rateBtn" style="margin-top:14px">Çekiciyi puanla</button>' : ''}
       ${['searching', 'accepted', 'arrived', 'towing', 'servicing'].includes(j.status) ? '<button class="btn" id="trackBtn" style="margin-top:14px">Canlı takip et</button>' : ''}`);
     $('#rateBtn', m.el) && ($('#rateBtn', m.el).onclick = () => { m.close(); openRating(j); });
+    YK.bindPhotoStrips(m.el);
+    $('#cancelSched', m.el) && ($('#cancelSched', m.el).onclick = async () => {
+      if (!(await confirmBox('Randevuyu iptal et', `${fmtWhen(j.scheduledAt)} randevunuz iptal edilecek.`, 'İptal et', true))) return;
+      try { await api(`/jobs/${j.id}/cancel`, { body: { reason: 'Randevu iptali' } }); m.close(); toast('Randevunuz iptal edildi'); await loadScheduled(); if (S.mode === 'idle') renderSheet(); if (S.tab === 'jobs') renderJobs(); } catch (e) { fail(e); }
+    });
     $('#trackBtn', m.el) && ($('#trackBtn', m.el).onclick = () => { m.close(); setTab('home'); setJob(j); });
   }
 
@@ -727,6 +834,9 @@
         <div class="stat"><div class="k">Davet kodum</div><div class="v">${h(u.referralCode)}</div></div>
       </div>
       <div class="banner dark" style="width:100%;margin-top:12px"><div class="bold" style="font-size:16px">Arkadaşını davet et, ikiniz de kazanın</div><div class="small" style="opacity:.8;margin:4px 0 10px">Arkadaşınız kayıtta 250 TL çek alır; ilk kurtarmasını tamamlayınca size de 250 TL.</div><button class="btn sm amber" id="inv2">${I.share} Davet bağlantısını paylaş</button></div>
+      <h2>Acil durum kişilerim</h2>
+      <div class="list">${(u.emergencyContacts || []).map((c, i) => `<div class="li"><span class="lic" style="background:var(--red-soft);color:var(--red)">${I.phone}</span><span class="grow"><b>${h(c.name)}</b><br><span class="small muted">${phoneFmt(c.phone)}</span></span><button data-ec="${i}" class="muted" aria-label="Sil">${I.trash}</button></div>`).join('')}
+        ${(u.emergencyContacts || []).length < 3 ? `<button class="li" id="addEc"><span class="lic">+</span><span class="grow"><b>Kişi ekle</b><br><span class="small muted">Acil düğmesine basınca konumunuz bu kişilere gönderilir (en fazla 3)</span></span></button>` : ''}</div>
       <h2>Kayıtlı adreslerim</h2>
       <div class="list">${(u.addresses || []).map((a, i) => `<div class="li"><span class="lic">${I.pin}</span><span class="grow"><b>${h(a.label)}</b><br><span class="small muted ellipsis" style="display:block">${h(a.address)}</span></span><button data-del="${i}" class="muted" aria-label="Sil">${I.trash}</button></div>`).join('') || '<div class="li muted small">Haritadaki pinin bulunduğu yeri “Yeni adres ekle” ile kaydedebilirsiniz.</div>'}</div>
       <h2>İndirim kodu</h2>
@@ -738,6 +848,20 @@
         <button class="li" id="logout"><span class="lic">${I.logout}</span><span class="grow"><b>Çıkış yap</b></span></button>
       </div></div>`;
     $('#inv2').onclick = shareInvite;
+    $$('[data-ec]').forEach((b) => (b.onclick = async () => {
+      try { S.user = (await api('/me', { method: 'PATCH', body: { emergencyContacts: u.emergencyContacts.filter((_, i) => i !== +b.dataset.ec) } })).user; renderAccount(); } catch (e) { fail(e); }
+    }));
+    $('#addEc') && ($('#addEc').onclick = () => {
+      const m = modal(`<h3>Acil durum kişisi</h3><label class="field"><span>Ad</span><input id="ecN" placeholder="Örn. Annem"></label><label class="field" style="margin-top:10px"><span>Cep telefonu</span><input id="ecP" inputmode="tel" placeholder="05xx xxx xx xx"></label><button class="btn" id="ecOk" style="margin-top:14px">Kaydet</button>`);
+      $('#ecOk', m.el).onclick = async () => {
+        const list = [...(u.emergencyContacts || []), { name: $('#ecN', m.el).value, phone: $('#ecP', m.el).value }];
+        try {
+          const r = await api('/me', { method: 'PATCH', body: { emergencyContacts: list } });
+          if (r.user.emergencyContacts.length < list.length) throw new Error('Ad ve geçerli bir cep telefonu girin');
+          S.user = r.user; m.close(); renderAccount(); toast('Acil durum kişisi eklendi');
+        } catch (e) { fail(e); }
+      };
+    });
     $('#editName').onclick = () => {
       const m = modal(`<h3>Profili düzenle</h3><label class="field"><span>Ad Soyad</span><input id="nn" value="${h(u.name)}"></label><label class="field" style="margin-top:10px"><span>Yeni şifre (isteğe bağlı)</span><input id="np" type="password" placeholder="Değiştirmek istemiyorsanız boş bırakın"></label><button class="btn" id="nok" style="margin-top:14px">Kaydet</button>`);
       $('#nok', m.el).onclick = async () => {

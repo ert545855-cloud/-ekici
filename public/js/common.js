@@ -34,6 +34,12 @@
     share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>',
     moon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>',
     trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>',
+    camera: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>',
+    send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/></svg>',
+    doc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6"/></svg>',
+    cal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
+    sos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>',
+    team: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></svg>',
     satIco: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 10 5-10 5L2 7z"/><path d="m2 12 10 5 10-5M2 17l10 5 10-5"/></svg>',
     mapIco: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/></svg>',
     // Hizmet çizimleri
@@ -74,6 +80,7 @@
   const phoneFmt = (p) => String(p || '').replace(/^(\d{3})(\d{3})(\d{2})(\d{2})$/, '0$1 $2 $3 $4');
   const initials = (n) => String(n || '?').split(' ').map((x) => x[0]).slice(0, 2).join('').toUpperCase();
   const STATUS = {
+    scheduled: ['Randevulu', 'green'],
     searching: ['Çekici aranıyor', 'amber'],
     accepted: ['Çekici yolda', 'green'],
     arrived: ['Çekici geldi', 'green'],
@@ -422,6 +429,188 @@
     return s;
   }
 
+  // ---------- Fotoğraf: seçme, sıkıştırma, yükleme, görüntüleme ----------
+  function pickImages({ multiple = false, camera = false } = {}) {
+    return new Promise((res) => {
+      const i = document.createElement('input');
+      i.type = 'file';
+      i.accept = 'image/*';
+      if (multiple) i.multiple = true;
+      if (camera) i.capture = 'environment';
+      i.style.display = 'none';
+      i.onchange = () => { res([...(i.files || [])]); i.remove(); };
+      document.body.appendChild(i);
+      i.click();
+    });
+  }
+  function compressImage(file, max = 1600, quality = 0.78) {
+    return new Promise((res, rej) => {
+      if (!file || !/^image\//.test(file.type)) return rej(new Error('Lütfen bir fotoğraf seçin'));
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const s = Math.min(1, max / Math.max(img.width, img.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.width * s);
+        c.height = Math.round(img.height * s);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url);
+        res(c.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('Fotoğraf okunamadı')); };
+      img.src = url;
+    });
+  }
+  async function uploadImage(file, kind) {
+    const dataUrl = await compressImage(file);
+    return api('/files', { body: { kind, dataUrl } });
+  }
+  function viewPhoto(url, caption = '') {
+    modal(`<img src="${h(url)}" alt="" style="width:100%;border-radius:14px;display:block">${caption ? `<p class="small muted center">${h(caption)}</p>` : ''}<button class="btn ghost" data-close style="margin-top:12px">Kapat</button>`);
+  }
+  const photoStrip = (list = [], size = 64) =>
+    `<div class="photo-strip">${list.map((p) => `<button class="ph" data-url="${h(p.url)}" style="width:${size}px;height:${size}px"><img src="${h(p.url)}" alt="" loading="lazy"></button>`).join('')}</div>`;
+  function bindPhotoStrips(root) {
+    $$('.photo-strip .ph', root).forEach((b) => (b.onclick = () => viewPhoto(b.dataset.url)));
+  }
+
+  // ---------- SMS doğrulama kodu penceresi ----------
+  // request(): kodu gönderir ({demoCode}); submit(code): doğrulamayı dener, hata fırlatırsa pencere açık kalır
+  function otpModal({ phone, request, submit, title = 'Telefon doğrulama', extraHtml = '', onReady }) {
+    return new Promise((resolve) => {
+      let left = 0;
+      let timer;
+      const m = modal(`
+        <div class="center"><span class="pin-hero" style="background:var(--brand-soft);color:var(--brand-2)">${I.msg}</span>
+        <h3 style="margin:10px 0 4px">${h(title)}</h3>
+        <p class="muted small" style="margin:0 0 14px"><b>${h(phoneFmt(String(phone).replace(/\D/g, '').replace(/^90/, '').replace(/^0/, '')))}</b> numarasına gönderilen 6 haneli kodu girin.</p></div>
+        <div id="otpDemo"></div>
+        <div class="pin-boxes six" id="otpBoxes">${[0, 1, 2, 3, 4, 5].map(() => '<i></i>').join('')}</div>
+        <input id="otpIn" class="pin-input" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" maxlength="6" aria-label="Doğrulama kodu">
+        ${extraHtml}
+        <p class="small center" id="otpErr" style="color:var(--red);min-height:20px;margin:10px 0 4px"></p>
+        <button class="btn" id="otpOk" disabled>Doğrula</button>
+        <button class="btn ghost" id="otpResend" style="margin-top:8px" disabled>Kodu tekrar gönder</button>`, { onClose: () => { clearInterval(timer); resolve(null); } });
+      const input = $('#otpIn', m.el);
+      const boxes = $$('#otpBoxes i', m.el);
+      const paint = () => {
+        const v = input.value;
+        boxes.forEach((b, i) => { b.textContent = v[i] || ''; b.classList.toggle('on', i === Math.min(v.length, 5)); });
+        $('#otpOk', m.el).disabled = v.length !== 6;
+      };
+      const tick = () => {
+        const b = $('#otpResend', m.el);
+        if (!b) return clearInterval(timer);
+        b.disabled = left > 0;
+        b.textContent = left > 0 ? `Kodu tekrar gönder (${left} sn)` : 'Kodu tekrar gönder';
+        left--;
+      };
+      const send = async () => {
+        try {
+          const r = await request();
+          $('#otpErr', m.el).textContent = '';
+          $('#otpDemo', m.el).innerHTML = r?.demoCode
+            ? `<button class="card flat small" id="otpFill" style="width:100%;margin-bottom:12px;border-color:var(--amber);background:var(--amber-soft);text-align:left">SMS servisi henüz bağlı değil (demo). Kodunuz: <b style="letter-spacing:.1em">${h(r.demoCode)}</b> — doldurmak için dokunun</button>`
+            : '';
+          const f = $('#otpFill', m.el);
+          if (f) f.onclick = () => { input.value = r.demoCode; paint(); };
+          left = 60;
+          clearInterval(timer);
+          timer = setInterval(tick, 1000);
+          tick();
+        } catch (e) {
+          $('#otpErr', m.el).textContent = e.message;
+          $('#otpResend', m.el).disabled = false;
+        }
+      };
+      const go = async () => {
+        if (input.value.length !== 6) return;
+        $('#otpOk', m.el).disabled = true;
+        try {
+          const r = await submit(input.value, m.el);
+          clearInterval(timer);
+          m.el.parentElement.remove();
+          resolve(r ?? true);
+        } catch (e) {
+          $('#otpErr', m.el).textContent = e.message;
+          $('#otpOk', m.el).disabled = false;
+        }
+      };
+      input.oninput = () => { input.value = input.value.replace(/\D/g, '').slice(0, 6); $('#otpErr', m.el).textContent = ''; paint(); };
+      $('#otpBoxes', m.el).onclick = () => input.focus();
+      $('#otpOk', m.el).onclick = go;
+      $('#otpResend', m.el).onclick = send;
+      paint();
+      onReady && onReady(m.el);
+      send();
+      setTimeout(() => input.focus(), 250);
+    });
+  }
+  // Şifremi unuttum: telefon → SMS kodu + yeni şifre → oturum
+  function forgotPassword(role) {
+    return new Promise((resolve) => {
+      const m = modal(`<h3>Şifremi unuttum</h3><p class="muted small" style="margin-top:-6px">Kayıtlı cep telefonunuza bir doğrulama kodu göndereceğiz.</p>
+        <label class="field"><span>Cep telefonu</span><input id="fpPhone" inputmode="tel" autocomplete="tel" placeholder="05xx xxx xx xx"></label>
+        <button class="btn" id="fpGo" style="margin-top:14px">Kod gönder</button>`, { onClose: () => resolve(null) });
+      $('#fpGo', m.el).onclick = async () => {
+        const phone = $('#fpPhone', m.el).value;
+        m.el.parentElement.remove();
+        const r = await otpModal({
+          phone,
+          title: 'Yeni şifre belirleyin',
+          extraHtml: '<label class="field" style="margin-top:14px"><span>Yeni şifre</span><input id="fpPass" type="password" minlength="6" autocomplete="new-password" placeholder="En az 6 karakter"></label>',
+          request: () => api('/auth/otp', { body: { phone, role, purpose: 'reset' } }),
+          submit: (code, el) => api('/auth/reset', { body: { phone, role, code, password: $('#fpPass', el).value } }),
+        });
+        resolve(r);
+      };
+    });
+  }
+
+  // ---------- Uygulama içi sohbet ----------
+  const QUICK = {
+    customer: ['Aracın yanındayım', 'Otoparktayım', 'Kapıdayım', 'Ne kadar kaldı?'],
+    driver: ['Yoldayım, geliyorum', '5 dakikaya oradayım', 'Konumdayım', 'Neredesiniz tam olarak?'],
+  };
+  function openChat({ job, me, socket, onClose }) {
+    const other = me === 'customer' ? job.driver?.name || 'Çekici' : job.customer?.name || 'Müşteri';
+    const msgs = [...(job.messages || [])];
+    const m = modal(`
+      <div class="row between"><h3 style="margin:0">${h(other)}</h3><span class="tiny muted">${h(job.no)} · numaranız paylaşılmaz</span></div>
+      <div class="chat" id="chatList"></div>
+      <div class="chips" style="padding-top:6px" id="chatQuick">${QUICK[me].map((q) => `<button class="chip" data-q="${h(q)}">${h(q)}</button>`).join('')}</div>
+      <div class="chat-bar"><button class="icon-btn" id="chatPhoto" style="box-shadow:none;background:var(--chip)" aria-label="Fotoğraf gönder">${I.camera}</button>
+        <input class="input grow" id="chatIn" placeholder="Mesaj yazın…" maxlength="500" autocomplete="off">
+        <button class="icon-btn" id="chatSend" style="background:var(--brand);color:#fff;box-shadow:none" aria-label="Gönder">${I.send}</button></div>`, { onClose: () => { socket && socket.off('job:message', onMsg); onClose && onClose(); } });
+    const list = $('#chatList', m.el);
+    const draw = () => {
+      list.innerHTML = msgs.length
+        ? msgs.map((x) => `<div class="bubble ${x.from === me ? 'me' : ''}">${x.url ? `<button class="ph-in" data-url="${h(x.url)}"><img src="${h(x.url)}" alt=""></button>` : ''}${x.text ? `<div>${h(x.text)}</div>` : ''}<span>${new Date(x.at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span></div>`).join('')
+        : `<div class="empty small">Henüz mesaj yok. ${me === 'customer' ? 'Çekicinize' : 'Müşteriye'} not yazabilir, fotoğraf gönderebilirsiniz.</div>`;
+      $$('.ph-in', list).forEach((b) => (b.onclick = () => viewPhoto(b.dataset.url)));
+      list.scrollTop = list.scrollHeight;
+    };
+    const onMsg = (e) => { if (e.jobId === job.id && !msgs.some((x) => x.id === e.message.id)) { msgs.push(e.message); draw(); } };
+    socket && socket.on('job:message', onMsg);
+    const send = async (text, fileId) => {
+      try {
+        const r = await api(`/jobs/${job.id}/messages`, { body: { text, fileId } });
+        if (!msgs.some((x) => x.id === r.message.id)) msgs.push(r.message);
+        draw();
+      } catch (e) { fail(e); }
+    };
+    $('#chatSend', m.el).onclick = () => { const v = $('#chatIn', m.el).value.trim(); if (v) { $('#chatIn', m.el).value = ''; send(v); } };
+    $('#chatIn', m.el).onkeydown = (e) => e.key === 'Enter' && $('#chatSend', m.el).click();
+    $$('[data-q]', m.el).forEach((b) => (b.onclick = () => send(b.dataset.q)));
+    $('#chatPhoto', m.el).onclick = async () => {
+      const [f] = await pickImages();
+      if (!f) return;
+      try { toast('Fotoğraf gönderiliyor…'); const up = await uploadImage(f, 'chat'); send('', up.id); } catch (e) { fail(e); }
+    };
+    draw();
+    return m;
+  }
+
   // ---------- Ses / titreşim (yeni iş uyarısı) ----------
   let actx;
   function alertSound(times = 3) {
@@ -455,5 +644,5 @@
   // Hizmet görselleri (müşteri tasarımındaki araç çizimleri)
   const svcImg = (k, cls = '') => `<img class="svc-img ${cls}" src="/img/svc-${k}.png" alt="" draggable="false">`;
 
-  window.YK = { $, $$, h, I, svcImg, api, auth, tl, dt, d8, phoneFmt, initials, STATUS, statusBadge, toast, fail, modal, confirmBox, perms, getPosition, registerSW, enablePush, showLocalNotification, connectSocket, createMap, initMaps, initGoogle, gmapsReady, toggleMapType, mapTypeButton, truckIcon, pinIcon, meIcon, route, geocode, resolvePlace, reverseGeocode, alertSound, applyTheme };
+  window.YK = { $, $$, h, I, svcImg, api, auth, tl, dt, d8, phoneFmt, initials, STATUS, statusBadge, toast, fail, modal, confirmBox, perms, getPosition, registerSW, enablePush, showLocalNotification, connectSocket, createMap, initMaps, initGoogle, gmapsReady, toggleMapType, mapTypeButton, truckIcon, pinIcon, meIcon, route, geocode, resolvePlace, reverseGeocode, alertSound, applyTheme, pickImages, compressImage, uploadImage, viewPhoto, photoStrip, bindPhotoStrips, otpModal, forgotPassword, openChat };
 })();

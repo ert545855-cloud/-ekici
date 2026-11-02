@@ -36,6 +36,28 @@ Martı TAG mantığında çalışan çekici çağırma uygulaması: müşteri ha
 - Çekiciler (paketi +30 gün uzat / durdur), müşteriler, talepler, ödemeler
 - Toplu bildirim gönderme (herkese / müşterilere / çekicilere)
 
+**Hesap güvenliği**
+- Kayıtta SMS ile 6 haneli doğrulama kodu (5 dk geçerli, 60 sn'de bir yeniden gönderim, saatte en fazla 5 kod, 5 hatalı denemede iptal)
+- “Şifremi unuttum”: SMS koduyla yeni şifre
+- SMS sağlayıcı bağlanmadıysa kod ekranda gösterilir (demo)
+
+**Çekici belge onayı**
+- Ruhsat, K belgesi, sigorta poliçesi ve ehliyet fotoğrafı yüklenir; yönetici her belgeyi onaylar veya gerekçeyle reddeder
+- Onaylanmayan çekici çevrimiçi olamaz, iş göremez ve kabul edemez
+- Firma şoförleri K belgesini firmadan devralır
+
+**Hasar fotoğrafları ve sohbet**
+- Çekme işlerinde araç yüklenmeden önce ve teslimde en az 2'şer fotoğraf zorunlu (`MIN_DAMAGE_PHOTOS`); müşteri takip ekranında ve geçmişte görür
+- Müşteri–çekici arasında uygulama içi sohbet, hazır cevaplar ve fotoğraf gönderme; telefon numarası paylaşmadan yazışma
+
+**Firma (filo) hesabı**
+- Kayıtta “Firma” seçilir; tek aylık paket `FLEET_MAX_VEHICLES` (varsayılan 10) araca kadar tüm şoförleri kapsar
+- Firma sahibi Filo sekmesinden şoför/araç ekler, filoyu haritada görür, açık talepleri şoförlerine atar
+
+**Randevulu çekme ve acil durum**
+- “İleri tarih” ile 30 dk – 14 gün sonrası için randevu; saatinden 45 dk önce otomatik çekici aranır, 2 saat kala hatırlatma
+- Acil düğmesi: 112 / 155 / 110 / 156, operatöre okunacak konum, acil kişilere konum SMS'i, “Kaza yaptım, çekici çağır”
+
 **Eşleşme kodu (güvenli teslim)**
 - Her talep için 4 haneli eşleşme kodu üretilir; kodu yalnızca müşteri görür (çekici ve yönetici göremez).
 - Çekici “Konuma vardım” dediğinde kod girme ekranı açılır. Kod doğrulanmadan araç yüklenemez, yol yardımı başlatılamaz ve iş tamamlanamaz.
@@ -73,6 +95,11 @@ Varsayılan: telefon `05000000000`, şifre `admin1234`. Render’da `ADMIN_PHONE
 | `SUPPORT_PHONE` | 4440000 | Uygulamadaki destek hattı |
 | `OFFER_RADIUS_KM` | 40 | Talebin iletileceği çekici yarıçapı |
 | `MAPBOX_TOKEN` | — | Mapbox public token (`pk.` ile başlar). Harita, adres arama ve rota için. |
+| `SMS_PROVIDER` | — | `netgsm` veya `twilio`. Boşsa SMS gönderilmez, doğrulama kodu ekranda gösterilir. |
+| `NETGSM_USERCODE`, `NETGSM_PASSWORD`, `NETGSM_HEADER` | — | Netgsm hesap bilgileri ve onaylı SMS başlığı |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` | — | Twilio bilgileri |
+| `FLEET_MAX_VEHICLES` | 10 | Firma paketine dahil en fazla araç (sahip dahil) |
+| `MIN_DAMAGE_PHOTOS` | 2 | Yükleme ve teslimde zorunlu en az fotoğraf |
 | `GOOGLE_MAPS_API_KEY` | — | Google Maps tarayıcı anahtarı. Tanımlıysa Mapbox yerine Google kullanılır. |
 
 Harita sağlayıcı önceliği: **Google Maps → Mapbox → OpenStreetMap**. Bir sağlayıcı hata verirse (geçersiz anahtar, kota vb.) sıradakine otomatik geçilir.

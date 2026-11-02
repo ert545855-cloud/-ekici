@@ -61,7 +61,8 @@ function applyDiscount(amount, code) {
   return Math.round(Math.min(d, amount));
 }
 
-function quote(db, { service, sub, pickup, dropoff, code, user }) {
+function quote(db, { service, sub, pickup, dropoff, code, user, at }) {
+  const when = at ? new Date(at) : new Date();
   const s = SERVICES[service];
   if (!s) throw new Error('Geçersiz hizmet');
   if (!pickup || typeof pickup.lat !== 'number') throw new Error('Konum gerekli');
@@ -79,7 +80,7 @@ function quote(db, { service, sub, pickup, dropoff, code, user }) {
     lines.push({ label: r.name, amount: r.price });
     subtotal = r.price;
   }
-  if (isNight()) {
+  if (isNight(when)) {
     const n = Math.round(subtotal * 0.2);
     lines.push({ label: 'Gece tarifesi (+%20)', amount: n });
     subtotal += n;
@@ -97,7 +98,7 @@ function quote(db, { service, sub, pickup, dropoff, code, user }) {
   let credit = 0;
   if (user && user.credits > 0) credit = Math.min(user.credits, subtotal - discount);
   const total = Math.max(0, subtotal - discount - credit);
-  return { service: s.key, sub: s.needsDropoff ? null : (ROADSIDE[sub] ? sub : 'aku'), distanceKm, lines, subtotal, discount, credit, total, code: codeInfo, codeError, night: isNight() };
+  return { service: s.key, sub: s.needsDropoff ? null : (ROADSIDE[sub] ? sub : 'aku'), distanceKm, lines, subtotal, discount, credit, total, code: codeInfo, codeError, night: isNight(when) };
 }
 
 function subscriptionQuote(db, { code, user }) {

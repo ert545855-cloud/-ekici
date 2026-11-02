@@ -103,4 +103,4 @@ async function flush() {
 const id = (p = '') => p + crypto.randomBytes(6).toString('hex');
 const persistent = () => !!pool;
 
-module.exports = { load, save, flush, id, persistent, get db() { return state; } };
+module.exports = { load, save, flush, id, persistent, pool: () => pool, get db() { return state; } };

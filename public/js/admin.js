@@ -34,7 +34,7 @@
     };
   }
 
-  const TABS = [['dash', 'Özet'], ['codes', 'İndirim kodları'], ['drivers', 'Çekiciler'], ['customers', 'Müşteriler'], ['jobs', 'Talepler'], ['payments', 'Ödemeler'], ['push', 'Bildirim gönder']];
+  const TABS = [['dash', 'Özet'], ['approvals', 'Belge onayı'], ['codes', 'İndirim kodları'], ['drivers', 'Çekiciler'], ['customers', 'Müşteriler'], ['jobs', 'Talepler'], ['payments', 'Ödemeler'], ['push', 'Bildirim gönder']];
   function renderMain() {
     app.innerHTML = `<div class="screen full"><div class="page" style="max-width:1180px">
       <div class="row between" style="flex-wrap:wrap;gap:10px"><div class="brand" style="display:inline-flex"><span class="logo">${I.tow}</span>YOLDA KALDIK · YÖNETİM</div>
@@ -43,7 +43,8 @@
       <div id="content"></div></div></div>`;
     $$('[data-t]').forEach((b) => (b.onclick = () => { S.tab = b.dataset.t; renderMain(); }));
     $('#lo').onclick = () => { auth.token = null; location.reload(); };
-    ({ dash, codes, drivers, customers, jobs, payments, push })[S.tab]();
+    ({ dash, approvals, codes, drivers, customers, jobs, payments, push })[S.tab]();
+    api('/admin/stats').then((s) => { const b = document.querySelector('[data-t=approvals]'); if (b && s.pendingApprovals) b.innerHTML = `Belge onayı <span class="badge red" style="padding:1px 7px;margin-left:4px">${s.pendingApprovals}</span>`; }).catch(() => {});
   }
   const C = () => $('#content');
 
@@ -51,13 +52,16 @@
   async function dash() {
     const s = await api('/admin/stats');
     C().innerHTML = `
+      ${!s.smsLive ? '<div class="card flat small" style="margin-bottom:12px;border-color:var(--amber)"><b>SMS servisi bağlı değil:</b> doğrulama kodları kullanıcıya ekranda gösteriliyor, acil durum SMS\'leri kullanıcının kendi mesaj uygulamasıyla gönderiliyor. Netgsm veya Twilio bilgilerini Render ortam değişkenlerine ekleyin.</div>' : ''}
+      ${s.pendingApprovals ? `<button class="card flat small" id="goAppr" style="margin-bottom:12px;border-color:var(--red);width:100%;text-align:left"><b>${s.pendingApprovals} çekicinin belgesi onay bekliyor →</b></button>` : ''}
       ${s.demo ? '<div class="card flat small" style="margin-bottom:12px;border-color:var(--amber)"><b>Demo modu açık:</b> gerçek çekici yokken sanal çekiciler talepleri kabul eder. Canlıya geçerken Render ortam değişkenlerinde <code>DEMO_MODE=false</code> yapın.</div>' : ''}
       <div class="stat-grid" style="grid-template-columns:repeat(auto-fill,minmax(170px,1fr))">
-        ${[['Müşteri', s.customers], ['Çekici', s.drivers], ['Aktif paket', s.activeSubs], ['Çevrimiçi çekici', s.onlineDrivers], ['Aktif talep', s.activeJobs], ['Tamamlanan', s.completedJobs], ['Toplam iş hacmi', tl(s.gmv)], ['Paket geliri (30 gün)', tl(s.subRevenueMonth)], ['Paket geliri (toplam)', tl(s.subRevenueAll)]]
+        ${[['Müşteri', s.customers], ['Çekici', s.drivers], ['Aktif paket', s.activeSubs], ['Çevrimiçi çekici', s.onlineDrivers], ['Aktif talep', s.activeJobs], ['Randevulu talep', s.scheduledJobs], ['Onay bekleyen', s.pendingApprovals], ['Tamamlanan', s.completedJobs], ['Toplam iş hacmi', tl(s.gmv)], ['Paket geliri (30 gün)', tl(s.subRevenueMonth)], ['Paket geliri (toplam)', tl(s.subRevenueAll)]]
           .map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('')}
       </div>
       <h2>Canlı harita</h2>
       <div class="card" style="padding:0;overflow:hidden;height:420px;position:relative"><div id="amap" style="position:absolute;inset:0"></div></div>`;
+    $('#goAppr') && ($('#goAppr').onclick = () => { S.tab = 'approvals'; renderMain(); });
     const j = await api('/admin/jobs');
     S.map = YK.createMap('amap', [41.0, 29.0], 10);
     S.layer = L.layerGroup().addTo(S.map);
@@ -128,17 +132,61 @@
   // ---------- Çekiciler ----------
   async function drivers() {
     const r = await api('/admin/users?role=driver');
-    C().innerHTML = `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Çekici</th><th>Plaka / araç</th><th>Hizmetler</th><th>Paket</th><th>Durum</th><th>Kazanç</th><th>İşlem</th></tr></thead><tbody>
+    C().innerHTML = `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Çekici</th><th>Plaka / araç</th><th>Hizmetler</th><th>Belgeler</th><th>Paket</th><th>Durum</th><th>Kazanç</th><th>İşlem</th></tr></thead><tbody>
       ${r.users.map((u) => `<tr><td><b>${h(u.name)}</b><br><span class="tiny muted">${phoneFmt(u.phone)}${u.driver.company ? ' · ' + h(u.driver.company) : ''}</span></td>
         <td><span class="plate">${h(u.driver.plate)}</span><br><span class="tiny muted">${h(u.driver.vehicle || '')}</span></td>
         <td class="small">${u.driver.services.map((s) => h(S.cfg.services[s]?.name || s)).join(', ')}</td>
-        <td>${u.subscriptionActive ? `<span class="badge green">Aktif</span><br><span class="tiny muted">${d8(u.driver.subscription.until)}</span>` : '<span class="badge amber">Yok</span>'}</td>
+        <td>${apBadge(u.approval)}<br><button class="tiny bold" data-docs="${u.id}" style="color:var(--brand-2);margin-top:4px">Belgeleri gör</button></td>
+        <td>${u.subscriptionActive ? `<span class="badge green">Aktif</span><br><span class="tiny muted">${u.firm && !u.firm.owner ? 'Firma: ' + h(u.firm.name) : d8(u.subscriptionUntil)}</span>` : '<span class="badge amber">Yok</span>'}${u.firm?.owner ? '<br><span class="badge ink" style="margin-top:4px">Firma</span>' : ''}</td>
         <td>${u.driver.online ? '<span class="badge green">Çevrimiçi</span>' : '<span class="badge">Çevrimdışı</span>'}</td>
         <td>${tl(u.driver.earnings || 0)}</td>
         <td class="row" style="gap:6px"><button class="btn sm ghost" data-ext="${u.id}">+30 gün</button>${u.subscriptionActive ? `<button class="btn sm danger" data-stop="${u.id}">Durdur</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">Henüz çekici yok</td></tr>'}
     </tbody></table></div>`;
+    $$('[data-docs]').forEach((b) => (b.onclick = () => docModal(r.users.find((u) => u.id === b.dataset.docs), drivers)));
     $$('[data-ext]').forEach((b) => (b.onclick = () => api(`/admin/drivers/${b.dataset.ext}/subscription`, { body: { days: 30 } }).then(() => { toast('Paket 30 gün uzatıldı'); drivers(); }).catch(fail)));
     $$('[data-stop]').forEach((b) => (b.onclick = async () => { if (await confirmBox('Paketi durdur', 'Çekici iş alamayacak.', 'Durdur', true)) api(`/admin/drivers/${b.dataset.stop}/subscription`, { body: { days: 0 } }).then(drivers).catch(fail); }));
+  }
+
+  // ---------- Belge onayı ----------
+  const apBadge = (a) => `<span class="badge ${a === 'approved' ? 'green' : a === 'rejected' ? 'red' : 'amber'}">${{ approved: 'Onaylı', pending: 'İnceleniyor', missing: 'Eksik', rejected: 'Reddedildi', firm_pending: 'Firma bekleniyor' }[a] || a}</span>`;
+  const DOCS = { ruhsat: 'Araç ruhsatı', kbelgesi: 'K belgesi', sigorta: 'Sigorta poliçesi', ehliyet: 'Sürücü belgesi (ehliyet)' };
+  function docCards(u) {
+    return Object.keys(DOCS).filter((k) => u.requiredDocs.includes(k) || u.driver.docs?.[k]).map((k) => {
+      const d = u.driver.docs?.[k];
+      return `<div class="doc-card" style="align-items:flex-start"><button class="thumb-doc" style="width:120px;height:86px" ${d ? `data-view="${h(d.url)}"` : ''}>${d ? `<img src="${h(d.url)}" alt="">` : I.doc}</button>
+        <div class="grow"><b>${DOCS[k]}</b><br>${d ? apBadge(d.status) + `<div class="tiny muted" style="margin-top:4px">${dt(d.uploadedAt)}</div>${d.note ? `<div class="tiny" style="color:var(--red)">${h(d.note)}</div>` : ''}` : '<span class="small muted">Yüklenmedi</span>'}
+        ${d && d.status !== 'approved' ? `<div class="row" style="margin-top:8px"><button class="btn sm" data-ok="${u.id}|${k}">Onayla</button><button class="btn sm danger" data-no="${u.id}|${k}">Reddet</button></div>` : ''}
+        ${d && d.status === 'approved' ? `<button class="tiny muted" data-no="${u.id}|${k}" style="margin-top:6px">Onayı geri al</button>` : ''}</div></div>`;
+    }).join('');
+  }
+  function bindDocs(root, after) {
+    $$('[data-view]', root).forEach((b) => (b.onclick = () => YK.viewPhoto(b.dataset.view)));
+    $$('[data-ok]', root).forEach((b) => (b.onclick = async () => {
+      const [id, type] = b.dataset.ok.split('|');
+      try { await api(`/admin/drivers/${id}/docs`, { body: { type, status: 'approved' } }); toast('Belge onaylandı'); after(); } catch (e) { fail(e); }
+    }));
+    $$('[data-no]', root).forEach((b) => (b.onclick = async () => {
+      const [id, type] = b.dataset.no.split('|');
+      const note = prompt('Red gerekçesi (çekiciye gönderilir):', 'Belge okunamıyor veya süresi dolmuş');
+      if (note === null) return;
+      try { await api(`/admin/drivers/${id}/docs`, { body: { type, status: 'rejected', note } }); toast('Belge reddedildi'); after(); } catch (e) { fail(e); }
+    }));
+    $$('[data-all]', root).forEach((b) => (b.onclick = async () => {
+      try { await api(`/admin/drivers/${b.dataset.all}/docs`, { body: { type: 'all', status: 'approved' } }); toast('Tüm belgeler onaylandı ✅'); after(); } catch (e) { fail(e); }
+    }));
+  }
+  function docModal(u, after) {
+    const m = YK.modal(`<div class="row between"><h3 style="margin:0">${h(u.name)}</h3>${apBadge(u.approval)}</div><p class="small muted">${phoneFmt(u.phone)} · ${h(u.driver.plate)}${u.firm ? ' · ' + h(u.firm.name) : ''}</p><div class="stack">${docCards(u)}</div><button class="btn ghost" data-close style="margin-top:14px">Kapat</button>`);
+    bindDocs(m.el, () => { m.close(); after(); });
+  }
+  async function approvals() {
+    const r = await api('/admin/approvals');
+    C().innerHTML = r.drivers.length
+      ? r.drivers.map((u) => `<div class="card" style="margin-bottom:12px"><div class="row between" style="flex-wrap:wrap;gap:8px"><div><b style="font-size:17px">${h(u.name)}</b> ${apBadge(u.approval)}<div class="small muted">${phoneFmt(u.phone)} · <span class="plate">${h(u.driver.plate)}</span> · ${h(u.driver.vehicle || '')}${u.firm ? ' · ' + (u.firm.owner ? 'Firma sahibi: ' : 'Firma: ') + h(u.firm.name) : ''}</div></div>
+          <button class="btn sm" data-all="${u.id}">Bekleyenlerin tümünü onayla</button></div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px;margin-top:12px">${docCards(u)}</div></div>`).join('')
+      : `<div class="empty">${I.shield}<p>Onay bekleyen belge yok</p></div>`;
+    bindDocs(C(), approvals);
   }
 
   async function customers() {

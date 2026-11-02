@@ -24,5 +24,13 @@ services:
         sync: false
       - key: MAPBOX_TOKEN
         sync: false
+      - key: SMS_PROVIDER
+        sync: false
+      - key: NETGSM_USERCODE
+        sync: false
+      - key: NETGSM_PASSWORD
+        sync: false
+      - key: NETGSM_HEADER
+        sync: false
       - key: GOOGLE_MAPS_API_KEY
         sync: false

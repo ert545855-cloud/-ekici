@@ -10,12 +10,18 @@ const webpush = require('web-push');
 
 const store = require('./src/db');
 const P = require('./src/pricing');
+const sms = require('./src/sms');
+const files = require('./src/files');
 
 const PORT = process.env.PORT || 3000;
 const DEMO_MODE = (process.env.DEMO_MODE || 'true') !== 'false';
 const OFFER_RADIUS_KM = Number(process.env.OFFER_RADIUS_KM || 40);
 const SEARCH_TIMEOUT_MS = 3 * 60 * 1000;
 const DAY = 24 * 60 * 60 * 1000;
+const FLEET_MAX = Number(process.env.FLEET_MAX_VEHICLES || 10); // firma paketine dahil en fazla araç (sahip dahil)
+const MIN_PHOTOS = Number(process.env.MIN_DAMAGE_PHOTOS || 2); // yükleme ve teslimde en az fotoğraf
+const SCHEDULE_LEAD_MS = 45 * 60 * 1000; // randevulu talepte çekici aramaya kaç dk önce başlanır
+const DOC_TYPES = { ruhsat: 'Araç ruhsatı', kbelgesi: 'K belgesi', sigorta: 'Sigorta poliçesi', ehliyet: 'Sürücü belgesi (ehliyet)' };
 
 const db = () => store.db;
 
@@ -81,12 +87,57 @@ function newUser({ role, name, phone, password, driver }) {
     driver: driver || null,
   };
 }
-const subActive = (u) => !!(u && u.driver && u.driver.subscription && new Date(u.driver.subscription.until) > new Date());
+function ownSubActive(u) {
+  return !!(u && u.driver && u.driver.subscription && new Date(u.driver.subscription.until) > new Date());
+}
+// Firma şoförünün paketi firma sahibinin paketidir
+function firmOwner(u) {
+  return u?.driver?.firmId ? db().users.find((x) => x.id === u.driver.firmId && x.role === 'driver') : null;
+}
+const subActive = (u) => (u?.driver?.firmId ? ownSubActive(firmOwner(u)) : ownSubActive(u));
+// Belge onayı: firma şoförü K belgesini firmadan devralır
+function requiredDocs(u) {
+  return u?.driver?.firmId ? ['ruhsat', 'sigorta', 'ehliyet'] : Object.keys(DOC_TYPES);
+}
+function approvalStatus(u) {
+  if (!u || u.role !== 'driver') return null;
+  if (u.bot) return 'approved';
+  const docs = u.driver.docs || {};
+  const need = requiredDocs(u);
+  if (need.some((k) => docs[k]?.status === 'rejected')) return 'rejected';
+  if (need.some((k) => !docs[k])) return 'missing';
+  if (need.some((k) => docs[k].status !== 'approved')) return 'pending';
+  if (u.driver.firmId && firmOwner(u)?.driver?.docs?.kbelgesi?.status !== 'approved') return 'firm_pending';
+  return 'approved';
+}
+const approved = (u) => approvalStatus(u) === 'approved';
+function approvalError(u) {
+  return {
+    missing: 'İş alabilmek için belgelerinizi yükleyin (Hesap → Belgelerim)',
+    pending: 'Belgeleriniz inceleniyor. Onaylanınca iş almaya başlayabilirsiniz.',
+    rejected: 'Bazı belgeleriniz reddedildi. Hesap → Belgelerim bölümünden yeniden yükleyin.',
+    firm_pending: 'Firmanızın K belgesi henüz onaylanmadı.',
+  }[approvalStatus(u)];
+}
 
 function publicUser(u) {
   if (!u) return null;
   const { passHash, pushSubs, ...rest } = u;
-  return { ...rest, pushEnabled: (pushSubs || []).length > 0, subscriptionActive: subActive(u) };
+  const out = { ...rest, pushEnabled: (pushSubs || []).length > 0, subscriptionActive: subActive(u) };
+  if (u.role === 'driver') {
+    const docs = {};
+    Object.keys(DOC_TYPES).forEach((k) => {
+      const d = u.driver.docs?.[k];
+      if (d) docs[k] = { ...d, url: files.url(d.fileId) };
+    });
+    const owner = firmOwner(u);
+    out.driver = { ...u.driver, docs };
+    out.approval = approvalStatus(u);
+    out.requiredDocs = requiredDocs(u);
+    out.firm = u.driver.isFirmOwner ? { name: u.driver.company || u.name, owner: true } : owner ? { name: owner.driver.company || owner.name, owner: false, ownerName: owner.name } : null;
+    out.subscriptionUntil = (owner || u).driver?.subscription?.until || null;
+  }
+  return out;
 }
 function publicDriver(u) {
   if (!u) return null;
@@ -111,6 +162,11 @@ function publicJob(j, forCustomer = false) {
   return {
     ...rest,
     pin: forCustomer ? pin : undefined,
+    photos: {
+      pickup: (j.photos?.pickup || []).map((p) => ({ ...p, url: files.url(p.id) })),
+      dropoff: (j.photos?.dropoff || []).map((p) => ({ ...p, url: files.url(p.id) })),
+    },
+    messages: (j.messages || []).map((m) => (m.file ? { ...m, url: files.url(m.file) } : m)),
     verified: isVerified(j),
     pinLocked: !!(pinLockedUntil && pinLockedUntil > Date.now()),
     customer: customer ? { id: customer.id, name: customer.name, phone: customer.phone } : null,
@@ -173,6 +229,12 @@ function notify(userId, title, body, data = {}) {
       }
     });
   });
+}
+
+function notifyPushOnly(u, title, body, data = {}) {
+  io.to('user:' + u.id).emit('chat:ping', { title, body, data });
+  const payload = JSON.stringify({ title, body, data });
+  (u.pushSubs || []).forEach((sub) => webpush.sendNotification(sub, payload, { TTL: 120, urgency: 'high' }).catch(() => {}));
 }
 
 // ---------- Demo çekiciler (gerçek çekici yokken akışı göstermek için) ----------
@@ -281,6 +343,7 @@ function runBot(job) {
 
 // ---------- İş akışı ----------
 const STATUS_TEXT = {
+  scheduled: 'Randevulu talep',
   searching: 'Yakındaki çekiciler aranıyor',
   accepted: 'Çekici yola çıktı',
   arrived: 'Çekici konumunuzda',
@@ -314,6 +377,7 @@ function eligibleDrivers(j) {
       u.role === 'driver' &&
       u.driver?.online &&
       subActive(u) &&
+      approved(u) &&
       (u.driver.services || []).includes(j.service) &&
       !db().jobs.some((x) => x.driverId === u.id && ACTIVE.includes(x.status)) &&
       (u.driver.lat == null || P.haversineKm(u.driver, j.pickup) <= OFFER_RADIUS_KM)
@@ -333,6 +397,7 @@ function dispatch(j) {
     const delay = drivers.length ? 25000 : 6000 + crypto.randomInt(4000);
     setTimeout(() => runBot(j), delay);
   }
+  const timeout = j.scheduledAt ? Math.max(SEARCH_TIMEOUT_MS, new Date(j.scheduledAt).getTime() + 15 * 60 * 1000 - Date.now()) : SEARCH_TIMEOUT_MS;
   setTimeout(() => {
     if (j.status === 'searching') {
       pushTimeline(j, 'expired');
@@ -341,7 +406,7 @@ function dispatch(j) {
       io.to('role:driver').emit('job:gone', { id: j.id });
       broadcastJob(j);
     }
-  }, SEARCH_TIMEOUT_MS);
+  }, timeout);
 }
 function assignDriver(j, d) {
   j.driverId = d.id;
@@ -400,6 +465,7 @@ function releaseCode(j) {
     if (i >= 0) c.usedBy.splice(i, 1);
   }
 }
+const fmtDate = (s) => new Date(s).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul', day: 'numeric', month: 'long', weekday: 'short', hour: '2-digit', minute: '2-digit' });
 const fmtTL = (n) => new Intl.NumberFormat('tr-TR').format(Math.round(n)) + ' TL';
 
 // ---------- HTTP ----------
@@ -408,7 +474,9 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: false } });
 
 app.disable('x-powered-by');
-app.use(express.json({ limit: '200kb' }));
+const jsonSmall = express.json({ limit: '200kb' });
+const jsonLarge = express.json({ limit: '6mb' });
+app.use((req, res, next) => (req.path === '/api/files' ? jsonLarge : jsonSmall)(req, res, next));
 app.use(
   express.static(path.join(__dirname, 'public'), {
     extensions: ['html'],
@@ -423,17 +491,55 @@ app.use('/vendor/leaflet', express.static(path.join(__dirname, 'node_modules', '
 
 app.get('/health', (req, res) => res.json({ ok: true, demo: DEMO_MODE, persistent: store.persistent() }));
 app.get('/api/config', (req, res) =>
-  res.json({ services: P.SERVICES, roadside: P.ROADSIDE, subscriptionPrice: P.SUBSCRIPTION_PRICE, vapidPublicKey: db().meta.vapid.publicKey, demo: DEMO_MODE, googleMapsKey: process.env.GOOGLE_MAPS_API_KEY || '', mapboxToken: process.env.MAPBOX_TOKEN || '', support: process.env.SUPPORT_PHONE || '4440000' })
+  res.json({ services: P.SERVICES, roadside: P.ROADSIDE, subscriptionPrice: P.SUBSCRIPTION_PRICE, vapidPublicKey: db().meta.vapid.publicKey, demo: DEMO_MODE, googleMapsKey: process.env.GOOGLE_MAPS_API_KEY || '', mapboxToken: process.env.MAPBOX_TOKEN || '', smsLive: !!sms.configured(), docTypes: DOC_TYPES, minPhotos: MIN_PHOTOS, fleetMax: FLEET_MAX, support: process.env.SUPPORT_PHONE || '4440000' })
 );
+
+// --- SMS doğrulama kodları (bellekte, 5 dk geçerli) ---
+const otps = new Map();
+const otpKey = (purpose, role, phone) => `${purpose}:${role}:${phone}`;
+app.post('/api/auth/otp', wrap(async (req, res) => {
+  const phone = normPhone(req.body?.phone);
+  const purpose = req.body?.purpose === 'reset' ? 'reset' : 'register';
+  const role = req.body?.role === 'driver' ? 'driver' : 'customer';
+  if (phone.length !== 10 || phone[0] !== '5') throw new Error('Geçerli bir cep telefonu girin (5xx xxx xx xx)');
+  const exists = db().users.some((u) => u.phone === phone && u.role === role);
+  if (purpose === 'register' && exists) throw new Error('Bu numara ile kayıtlı hesap var. Giriş yapın veya “Şifremi unuttum”u kullanın.');
+  if (purpose === 'reset' && !exists) throw new Error('Bu numarayla kayıtlı hesap bulunamadı');
+  const key = otpKey(purpose, role, phone);
+  const prev = otps.get(key);
+  const now = Date.now();
+  if (prev && now - prev.sentAt < 60 * 1000) throw new Error(`Yeni kod için ${Math.ceil((60 * 1000 - (now - prev.sentAt)) / 1000)} sn bekleyin`);
+  const hourly = (prev?.history || []).filter((t) => now - t < 60 * 60 * 1000);
+  if (hourly.length >= 5) throw new Error('Çok fazla kod istendi. Bir saat sonra tekrar deneyin.');
+  const code = String(crypto.randomInt(100000, 1000000));
+  await sms.send(phone, `Yolda Kaldık doğrulama kodunuz: ${code}. Kodu kimseyle paylaşmayın.`);
+  otps.set(key, { code, exp: now + 5 * 60 * 1000, tries: 0, sentAt: now, history: [...hourly, now] });
+  res.json({ ok: true, expiresIn: 300, demoCode: sms.configured() ? undefined : code });
+}));
+function checkOtp(purpose, role, phone, code) {
+  const key = otpKey(purpose, role, phone);
+  const o = otps.get(key);
+  if (!o || o.exp < Date.now()) throw new Error('Doğrulama kodunun süresi doldu. Yeni kod isteyin.');
+  if (o.tries >= 5) throw new Error('Çok fazla hatalı deneme. Yeni kod isteyin.');
+  if (String(code || '').replace(/\D/g, '') !== o.code) {
+    o.tries++;
+    throw new Error(`Doğrulama kodu hatalı (${5 - o.tries} deneme hakkı kaldı)`);
+  }
+  otps.delete(key);
+}
+setInterval(() => { const n = Date.now(); for (const [k, o] of otps) if (o.exp < n - 60 * 60 * 1000) otps.delete(k); }, 10 * 60 * 1000);
 
 // --- Hesaplar ---
 app.post('/api/auth/register', wrap((req, res) => {
-  const { role = 'customer', name, phone, password, referral, driver } = req.body || {};
+  const { role = 'customer', name, phone, password, referral, driver, otp } = req.body || {};
   if (!['customer', 'driver'].includes(role)) throw new Error('Geçersiz hesap türü');
   if (!name || String(name).trim().length < 2) throw new Error('Ad soyad girin');
   if (normPhone(phone).length !== 10) throw new Error('Geçerli bir cep telefonu girin (5xx xxx xx xx)');
   if (!password || String(password).length < 6) throw new Error('Şifre en az 6 karakter olmalı');
   if (db().users.some((u) => u.phone === normPhone(phone) && u.role === role)) throw new Error('Bu numara ile kayıtlı hesap var');
+  const firm = role === 'driver' && !!driver?.firm;
+  if (firm && String(driver?.company || '').trim().length < 2) throw new Error('Firma adını girin');
+  if (referral && role === 'customer' && !db().users.some((x) => x.referralCode === String(referral).trim().toUpperCase())) throw new Error('Davet kodu bulunamadı');
   let driverData = null;
   if (role === 'driver') {
     const services = (driver?.services || []).filter((s) => P.SERVICES[s]);
@@ -452,9 +558,14 @@ app.post('/api/auth/register', wrap((req, res) => {
       ratingSum: 0,
       ratingCount: 0,
       subscription: null,
+      docs: {},
+      isFirmOwner: firm,
+      firmId: null,
     };
   }
+  checkOtp('register', role, normPhone(phone), otp);
   const u = newUser({ role, name, phone, password, driver: driverData });
+  u.phoneVerified = true;
   if (referral && role === 'customer') {
     const inviter = db().users.find((x) => x.referralCode === String(referral).trim().toUpperCase());
     if (!inviter) throw new Error('Davet kodu bulunamadı');
@@ -464,7 +575,7 @@ app.post('/api/auth/register', wrap((req, res) => {
   db().users.push(u);
   store.save();
   setTimeout(() => {
-    if (role === 'driver') notify(u.id, 'Hoş geldiniz 👋', 'Aylık çekici paketinizi etkinleştirerek iş almaya başlayabilirsiniz.', { url: '/cekici#paket' });
+    if (role === 'driver') notify(u.id, 'Hoş geldiniz 👋', 'İş almak için belgelerinizi yükleyin ve aylık paketinizi etkinleştirin.', { url: '/cekici' });
     else notify(u.id, 'Yolda Kaldık\'a hoş geldiniz', u.credits ? '250 TL davet çekiniz hesabınızda. İlk kurtarmada ILK30 kodu ile %30 indirim!' : 'İlk kurtarmanızda ILK30 kodu ile %30 indirim kazanın.');
   }, 800);
   res.json({ token: sign(u), user: publicUser(u) });
@@ -478,6 +589,21 @@ app.post('/api/auth/login', wrap((req, res) => {
   res.json({ token: sign(u), user: publicUser(u) });
 }));
 
+app.post('/api/auth/reset', wrap((req, res) => {
+  const phone = normPhone(req.body?.phone);
+  const role = req.body?.role === 'driver' ? 'driver' : 'customer';
+  const pw = String(req.body?.password || '');
+  if (pw.length < 6) throw new Error('Yeni şifre en az 6 karakter olmalı');
+  const u = db().users.find((x) => x.phone === phone && x.role === role);
+  if (!u) throw new Error('Bu numarayla kayıtlı hesap bulunamadı');
+  checkOtp('reset', role, phone, req.body?.code);
+  u.passHash = bcrypt.hashSync(pw, 10);
+  u.phoneVerified = true;
+  store.save();
+  notify(u.id, 'Şifreniz değiştirildi', 'Bu işlemi siz yapmadıysanız hemen destek hattımızı arayın.');
+  res.json({ token: sign(u), user: publicUser(u) });
+}));
+
 app.get('/api/me', auth(), (req, res) => res.json({ user: publicUser(req.user) }));
 app.patch('/api/me', auth(), wrap((req, res) => {
   const u = req.user;
@@ -485,6 +611,12 @@ app.patch('/api/me', auth(), wrap((req, res) => {
   if (b.name) u.name = String(b.name).trim().slice(0, 60);
   if (Array.isArray(b.addresses)) u.addresses = b.addresses.map(cleanPoint).filter(Boolean).slice(0, 8).map((a, i) => ({ ...a, label: String(b.addresses[i].label || 'Adres').slice(0, 30) }));
   if (b.settings) u.settings = { ...(u.settings || {}), ...b.settings };
+  if (Array.isArray(b.emergencyContacts)) {
+    u.emergencyContacts = b.emergencyContacts
+      .map((c) => ({ name: String(c?.name || '').trim().slice(0, 40), phone: normPhone(c?.phone) }))
+      .filter((c) => c.name && c.phone.length === 10)
+      .slice(0, 3);
+  }
   if (u.role === 'driver' && b.driver) {
     const d = b.driver;
     if (d.plate) u.driver.plate = String(d.plate).toUpperCase().slice(0, 15);
@@ -553,7 +685,7 @@ app.get('/api/nearby', (req, res) => {
 // --- Fiyat & talep ---
 app.post('/api/quote', auth('customer'), wrap((req, res) => {
   const b = req.body || {};
-  res.json(P.quote(db(), { service: b.service, sub: b.sub, pickup: cleanPoint(b.pickup), dropoff: cleanPoint(b.dropoff), code: b.code, user: req.user }));
+  res.json(P.quote(db(), { service: b.service, sub: b.sub, pickup: cleanPoint(b.pickup), dropoff: cleanPoint(b.dropoff), code: b.code, user: req.user, at: b.scheduledAt }));
 }));
 app.post('/api/codes/check', auth(), wrap((req, res) => {
   const target = req.body.target === 'subscription' ? 'subscription' : 'ride';
@@ -565,10 +697,18 @@ app.post('/api/codes/check', auth(), wrap((req, res) => {
 app.post('/api/jobs', auth('customer'), wrap((req, res) => {
   const b = req.body || {};
   const u = req.user;
-  if (db().jobs.some((j) => j.customerId === u.id && ACTIVE.includes(j.status))) throw new Error('Devam eden bir talebiniz var');
+  let scheduledAt = null;
+  if (b.scheduledAt) {
+    const t = new Date(b.scheduledAt);
+    if (isNaN(t)) throw new Error('Randevu zamanı geçersiz');
+    if (t - Date.now() < 30 * 60 * 1000) throw new Error('Randevu en az 30 dakika sonrası için olmalı');
+    if (t - Date.now() > 14 * DAY) throw new Error('Randevu en fazla 14 gün sonrası için alınabilir');
+    if (db().jobs.filter((j) => j.customerId === u.id && j.status === 'scheduled').length >= 3) throw new Error('En fazla 3 planlı talebiniz olabilir');
+    scheduledAt = t.toISOString();
+  } else if (db().jobs.some((j) => j.customerId === u.id && ACTIVE.includes(j.status))) throw new Error('Devam eden bir talebiniz var');
   const pickup = cleanPoint(b.pickup);
   const dropoff = P.SERVICES[b.service]?.needsDropoff ? cleanPoint(b.dropoff) : null;
-  const q = P.quote(db(), { service: b.service, sub: b.sub, pickup, dropoff, code: b.code, user: u });
+  const q = P.quote(db(), { service: b.service, sub: b.sub, pickup, dropoff, code: b.code, user: u, at: scheduledAt });
   if (b.code && q.codeError) throw new Error(q.codeError);
   if (q.code) {
     const c = db().codes.find((x) => x.code === q.code.code);
@@ -590,15 +730,24 @@ app.post('/api/jobs', auth('customer'), wrap((req, res) => {
     vehicle: { plate: String(b.vehicle?.plate || '').toUpperCase().slice(0, 15), model: String(b.vehicle?.model || '').slice(0, 60) },
     note: String(b.note || '').slice(0, 300),
     contactPhone: normPhone(b.contactPhone || u.phone),
-    status: 'searching',
+    status: scheduledAt ? 'scheduled' : 'searching',
+    scheduledAt,
     pin: newPin(),
     verified: false,
+    photos: { pickup: [], dropoff: [] },
+    messages: [],
     timeline: [],
     createdAt: new Date().toISOString(),
   };
-  pushTimeline(j, 'searching');
   db().jobs.push(j);
-  dispatch(j);
+  if (scheduledAt) {
+    pushTimeline(j, 'scheduled', 'Randevulu talep oluşturuldu: ' + fmtDate(scheduledAt));
+    store.save();
+    notify(u.id, 'Randevunuz oluşturuldu 📅', `${fmtDate(scheduledAt)} için ${P.SERVICES[j.service].name} talebiniz alındı. Saatinden önce çekici atanacak.`, { jobId: j.id });
+  } else {
+    pushTimeline(j, 'searching');
+    dispatch(j);
+  }
   res.json({ job: publicJob(j, true) });
 }));
 
@@ -613,6 +762,7 @@ app.get('/api/jobs', auth('customer', 'driver'), (req, res) => {
 });
 app.get('/api/jobs/offers', auth('driver'), (req, res) => {
   const u = req.user;
+  if (!approved(u)) return res.json({ offers: [] });
   const offers = db().jobs
     .filter((j) => j.status === 'searching' && (u.driver.services || []).includes(j.service) && (u.driver.lat == null || P.haversineKm(u.driver, j.pickup) <= OFFER_RADIUS_KM))
     .map((j) => ({ ...publicJob(j), distanceToPickup: u.driver.lat != null ? Math.round(P.haversineKm(u.driver, j.pickup) * 10) / 10 : null }));
@@ -627,7 +777,8 @@ function jobFor(req) {
 app.post('/api/jobs/:id/accept', auth('driver'), wrap((req, res) => {
   const u = req.user;
   const j = jobFor(req);
-  if (!subActive(u)) throw new Error('İş almak için aylık paketinizi etkinleştirin');
+  if (!subActive(u)) throw new Error(u.driver.firmId ? 'Firmanızın aylık paketi aktif değil' : 'İş almak için aylık paketinizi etkinleştirin');
+  if (!approved(u)) throw new Error(approvalError(u));
   if (db().jobs.some((x) => x.driverId === u.id && ACTIVE.includes(x.status))) throw new Error('Önce aktif işinizi tamamlayın');
   if (j.status !== 'searching') throw new Error('Bu talep başka bir çekici tarafından alındı');
   if (!u.driver.services.includes(j.service)) throw new Error('Bu hizmet türü hesabınızda kapalı');
@@ -642,6 +793,8 @@ app.post('/api/jobs/:id/status', auth('driver'), wrap((req, res) => {
   const flow = { accepted: ['arrived'], arrived: [j.dropoff ? 'towing' : 'servicing'], towing: ['completed'], servicing: ['completed'] };
   if (!(flow[j.status] || []).includes(next)) throw new Error('Geçersiz durum geçişi');
   if (j.status === 'arrived' && !isVerified(j)) throw new Error('Önce müşterinin 4 haneli eşleşme kodunu girin');
+  if (next === 'towing' && (j.photos?.pickup || []).length < MIN_PHOTOS) throw new Error(`Aracı yüklemeden önce en az ${MIN_PHOTOS} hasar fotoğrafı çekin`);
+  if (next === 'completed' && j.dropoff && (j.photos?.dropoff || []).length < MIN_PHOTOS) throw new Error(`Teslimden önce en az ${MIN_PHOTOS} teslim fotoğrafı çekin`);
   if (next === 'completed') completeJob(j);
   else setStatus(j, next);
   res.json({ job: publicJob(j) });
@@ -679,7 +832,7 @@ app.post('/api/jobs/:id/cancel', auth('customer', 'driver'), wrap((req, res) => 
   const reason = String(req.body?.reason || '').slice(0, 120);
   if (u.role === 'customer') {
     if (j.customerId !== u.id) throw new Error('Bu talep size ait değil');
-    if (!['searching', 'accepted', 'arrived'].includes(j.status)) throw new Error('Bu aşamada iptal edilemez');
+    if (!['scheduled', 'searching', 'accepted', 'arrived'].includes(j.status)) throw new Error('Bu aşamada iptal edilemez');
     const d = j.driverId ? findDriver(j.driverId) : null;
     pushTimeline(j, 'cancelled', 'Müşteri iptal etti' + (reason ? ': ' + reason : ''));
     releaseCode(j);
@@ -720,13 +873,25 @@ app.post('/api/jobs/:id/rate', auth('customer'), wrap((req, res) => {
 app.post('/api/driver/online', auth('driver'), wrap((req, res) => {
   const u = req.user;
   const on = !!req.body.online;
-  if (on && !subActive(u)) throw new Error('Çevrimiçi olmak için aylık paketinizi etkinleştirin');
+  if (on && !subActive(u)) throw new Error(u.driver.firmId ? 'Firmanızın aylık paketi aktif değil' : 'Çevrimiçi olmak için aylık paketinizi etkinleştirin');
+  if (on && !approved(u)) throw new Error(approvalError(u));
   u.driver.online = on;
   if (isPoint(req.body.location)) Object.assign(u.driver, { lat: +req.body.location.lat, lng: +req.body.location.lng });
   store.save();
   res.json({ user: publicUser(u) });
 }));
 app.post('/api/driver/subscription/quote', auth('driver'), wrap((req, res) => res.json(P.subscriptionQuote(db(), { code: req.body.code, user: req.user }))));
+app.use('/api/driver/subscription', (req, res, next) => {
+  // Firma şoförleri paket satın almaz; firma sahibinin paketi geçerlidir
+  if (req.method === 'POST' && req.path === '/' ) {
+    try {
+      const p = jwt.verify((req.headers.authorization || '').slice(7), db().meta.jwtSecret);
+      const u = db().users.find((x) => x.id === p.uid);
+      if (u?.driver?.firmId) return res.status(400).json({ error: 'Paketiniz firmanız tarafından karşılanıyor' });
+    } catch {}
+  }
+  next();
+});
 app.post('/api/driver/subscription', auth('driver'), wrap((req, res) => {
   const u = req.user;
   const q = P.subscriptionQuote(db(), { code: req.body.code, user: u });
@@ -777,6 +942,177 @@ app.get('/api/driver/stats', auth('driver'), (req, res) => {
   res.json({ todayCount: t.length, todayTotal: sum(t), monthCount: month.length, monthTotal: sum(month), allCount: mine.length, rating: r.ratingCount ? Math.round((r.ratingSum / r.ratingCount) * 10) / 10 : null, ratingCount: r.ratingCount, week, net: sum(month) - (month.length ? P.SUBSCRIPTION_PRICE : 0) });
 });
 
+// --- Dosyalar (belge, hasar ve sohbet fotoğrafları) ---
+app.post('/api/files', auth(), wrap(async (req, res) => {
+  const kind = ['doc', 'damage', 'chat'].includes(req.body?.kind) ? req.body.kind : 'chat';
+  const recent = (req.user._uploads || []).filter((t) => Date.now() - t < 60 * 1000);
+  if (recent.length >= 20) throw new Error('Çok fazla yükleme, biraz bekleyin');
+  req.user._uploads = [...recent, Date.now()];
+  res.json(await files.save({ owner: req.user.id, kind, dataUrl: req.body?.dataUrl }));
+}));
+app.get('/api/files/:id', async (req, res) => {
+  try {
+    if (!files.verify(req.params.id, req.query.sig)) return res.status(403).end();
+    const f = await files.read(req.params.id);
+    if (!f) return res.status(404).end();
+    res.set({ 'Content-Type': f.mime, 'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff' });
+    res.send(f.data);
+  } catch {
+    res.status(500).end();
+  }
+});
+
+// --- Çekici belgeleri ---
+app.post('/api/driver/docs', auth('driver'), wrap((req, res) => {
+  const u = req.user;
+  const type = req.body?.type;
+  if (!DOC_TYPES[type]) throw new Error('Geçersiz belge türü');
+  if (type === 'kbelgesi' && u.driver.firmId) throw new Error('K belgesi firma hesabından yüklenir');
+  const fileId = String(req.body?.fileId || '');
+  if (!/^f_[a-f0-9]{20}$/.test(fileId)) throw new Error('Önce fotoğraf yükleyin');
+  u.driver.docs = u.driver.docs || {};
+  u.driver.docs[type] = { fileId, status: 'pending', note: '', uploadedAt: new Date().toISOString() };
+  store.save();
+  db().users.filter((x) => x.role === 'admin').forEach((a) => notify(a.id, 'Yeni belge onay bekliyor', `${u.name} · ${DOC_TYPES[type]}`, { url: '/admin' }));
+  io.to('role:admin').emit('admin:docs');
+  res.json({ user: publicUser(u) });
+}));
+
+// --- Hasar fotoğrafları ---
+app.post('/api/jobs/:id/photos', auth('driver'), wrap((req, res) => {
+  const j = jobFor(req);
+  if (j.driverId !== req.user.id) throw new Error('Bu iş size ait değil');
+  const stage = req.body?.stage === 'dropoff' ? 'dropoff' : 'pickup';
+  if (stage === 'pickup' && !['arrived'].includes(j.status)) throw new Error('Yükleme fotoğrafları araç başındayken çekilir');
+  if (stage === 'dropoff' && !['towing', 'servicing'].includes(j.status)) throw new Error('Teslim fotoğrafları teslimde çekilir');
+  const ids = (req.body?.fileIds || []).filter((x) => /^f_[a-f0-9]{20}$/.test(x)).slice(0, 8);
+  if (!ids.length) throw new Error('Fotoğraf seçin');
+  j.photos = j.photos || { pickup: [], dropoff: [] };
+  j.photos[stage] = [...(j.photos[stage] || []), ...ids.map((id) => ({ id, at: new Date().toISOString() }))].slice(0, 12);
+  j.timeline.push({ status: j.status, at: new Date().toISOString(), note: `${ids.length} ${stage === 'pickup' ? 'yükleme öncesi' : 'teslim'} fotoğrafı eklendi` });
+  notify(j.customerId, stage === 'pickup' ? 'Aracınızın fotoğrafları çekildi 📷' : 'Teslim fotoğrafları eklendi 📷', 'Fotoğrafları takip ekranında görebilirsiniz.', { jobId: j.id });
+  broadcastJob(j);
+  res.json({ job: publicJob(j) });
+}));
+
+// --- Uygulama içi mesajlaşma ---
+app.post('/api/jobs/:id/messages', auth('customer', 'driver'), wrap((req, res) => {
+  const j = jobFor(req);
+  const u = req.user;
+  const from = j.customerId === u.id ? 'customer' : j.driverId === u.id ? 'driver' : null;
+  if (!from) throw new Error('Bu talebin sohbetine erişiminiz yok');
+  if (!['accepted', 'arrived', 'towing', 'servicing'].includes(j.status)) throw new Error('Sohbet yalnızca aktif kurtarma sırasında açıktır');
+  const text = String(req.body?.text || '').trim().slice(0, 500);
+  const file = /^f_[a-f0-9]{20}$/.test(req.body?.fileId || '') ? req.body.fileId : null;
+  if (!text && !file) throw new Error('Mesaj boş olamaz');
+  const m = { id: store.id('m_'), from, name: u.name, text, file, at: new Date().toISOString() };
+  j.messages = [...(j.messages || []), m].slice(-300);
+  store.save();
+  const out = file ? { ...m, url: files.url(file) } : m;
+  io.to(['user:' + j.customerId, ...(j.driverId ? ['user:' + j.driverId] : [])]).emit('job:message', { jobId: j.id, message: out });
+  const to = from === 'customer' ? j.driverId : j.customerId;
+  const toUser = to && db().users.find((x) => x.id === to);
+  if (toUser) notifyPushOnly(toUser, `💬 ${u.name}`, text || '📷 Fotoğraf', { jobId: j.id, type: 'chat', url: toUser.role === 'driver' ? '/cekici' : '/' });
+  // Demo çekici kısa bir yanıt verir
+  const d = findDriver(j.driverId);
+  if (d?.bot && from === 'customer') {
+    setTimeout(() => {
+      const reply = { id: store.id('m_'), from: 'driver', name: d.name, text: ['Tamamdır, yoldayım 👍', 'Anlaşıldı, birkaç dakikaya oradayım.', 'Not aldım, teşekkürler.'][crypto.randomInt(3)], file: null, at: new Date().toISOString() };
+      j.messages = [...(j.messages || []), reply].slice(-300);
+      store.save();
+      io.to('user:' + j.customerId).emit('job:message', { jobId: j.id, message: reply });
+    }, 2500);
+  }
+  res.json({ message: out });
+}));
+
+// --- Firma (filo) yönetimi ---
+const fleetOwner = (req) => {
+  const u = req.user;
+  if (!u.driver?.isFirmOwner) throw new Error('Bu bölüm yalnızca firma hesapları içindir');
+  return u;
+};
+const fleetMembers = (owner) => db().users.filter((x) => x.role === 'driver' && x.driver?.firmId === owner.id);
+function fleetView(owner) {
+  const all = [owner, ...fleetMembers(owner)];
+  const members = all.map((m) => {
+    const job = db().jobs.filter((j) => j.driverId === m.id && ACTIVE.includes(j.status)).pop();
+    return {
+      id: m.id, name: m.name, phone: m.phone, plate: m.driver.plate, vehicle: m.driver.vehicle, services: m.driver.services,
+      online: !!m.driver.online, lat: m.driver.lat, lng: m.driver.lng, owner: m.id === owner.id, approval: approvalStatus(m),
+      job: job ? { id: job.id, no: job.no, status: job.status, service: job.service, total: job.price.total, pickup: job.pickup } : null,
+      earnings: m.driver.earnings || 0,
+    };
+  });
+  const svc = new Set(all.flatMap((m) => m.driver.services));
+  const near = (j) => all.some((m) => m.driver.lat == null || P.haversineKm(m.driver, j.pickup) <= OFFER_RADIUS_KM);
+  const offers = db().jobs.filter((j) => j.status === 'searching' && svc.has(j.service) && near(j)).map((j) => publicJob(j));
+  return { members, offers, max: FLEET_MAX, subscriptionActive: ownSubActive(owner) };
+}
+app.get('/api/fleet', auth('driver'), wrap((req, res) => res.json(fleetView(fleetOwner(req)))));
+app.post('/api/fleet/members', auth('driver'), wrap((req, res) => {
+  const owner = fleetOwner(req);
+  const b = req.body || {};
+  if (fleetMembers(owner).length + 1 >= FLEET_MAX) throw new Error(`Paketiniz en fazla ${FLEET_MAX} aracı kapsıyor`);
+  if (!b.name || String(b.name).trim().length < 2) throw new Error('Şoför adını girin');
+  if (normPhone(b.phone).length !== 10) throw new Error('Geçerli bir cep telefonu girin');
+  if (!b.password || String(b.password).length < 6) throw new Error('Şifre en az 6 karakter olmalı');
+  if (db().users.some((u) => u.phone === normPhone(b.phone) && u.role === 'driver')) throw new Error('Bu numara ile kayıtlı çekici hesabı var');
+  if (!b.plate || String(b.plate).trim().length < 5) throw new Error('Plaka girin');
+  const services = (b.services || []).filter((s) => P.SERVICES[s]);
+  if (!services.length) throw new Error('En az bir hizmet seçin');
+  const m = newUser({
+    role: 'driver', name: b.name, phone: b.phone, password: b.password,
+    driver: { plate: String(b.plate).toUpperCase().trim().slice(0, 15), vehicle: String(b.vehicle || '').slice(0, 60), company: owner.driver.company, services, online: false, lat: null, lng: null, earnings: 0, ratingSum: 0, ratingCount: 0, subscription: null, docs: {}, isFirmOwner: false, firmId: owner.id },
+  });
+  db().users.push(m);
+  store.save();
+  res.json(fleetView(owner));
+}));
+app.delete('/api/fleet/members/:id', auth('driver'), wrap((req, res) => {
+  const owner = fleetOwner(req);
+  const m = fleetMembers(owner).find((x) => x.id === req.params.id);
+  if (!m) throw new Error('Şoför bulunamadı');
+  if (db().jobs.some((j) => j.driverId === m.id && ACTIVE.includes(j.status))) throw new Error('Şoförün devam eden işi var');
+  db().users = db().users.filter((x) => x.id !== m.id);
+  store.save();
+  io.to('user:' + m.id).disconnectSockets(true);
+  res.json(fleetView(owner));
+}));
+app.post('/api/fleet/assign', auth('driver'), wrap((req, res) => {
+  const owner = fleetOwner(req);
+  const j = db().jobs.find((x) => x.id === req.body?.jobId);
+  const m = [owner, ...fleetMembers(owner)].find((x) => x.id === req.body?.driverId);
+  if (!j || !m) throw new Error('Talep veya şoför bulunamadı');
+  if (j.status !== 'searching') throw new Error('Bu talep artık açık değil');
+  if (!ownSubActive(owner)) throw new Error('Firma paketiniz aktif değil');
+  if (!approved(m)) throw new Error(`${m.name}: ${approvalError(m)}`);
+  if (!m.driver.services.includes(j.service)) throw new Error(`${m.name} bu hizmeti vermiyor`);
+  if (db().jobs.some((x) => x.driverId === m.id && ACTIVE.includes(x.status))) throw new Error(`${m.name} şu an başka bir işte`);
+  assignDriver(j, m);
+  if (m.id !== owner.id) notify(m.id, '📋 Firmanız size iş atadı', `${P.SERVICES[j.service].name} · ${j.pickup.address || ''} · ${fmtTL(j.price.total)}`, { jobId: j.id, url: '/cekici' });
+  res.json(fleetView(owner));
+}));
+
+// --- Acil durum ---
+app.post('/api/sos', auth('customer'), wrap(async (req, res) => {
+  const u = req.user;
+  const p = cleanPoint(req.body?.location);
+  if (u._sosAt && Date.now() - u._sosAt < 60 * 1000) throw new Error('Acil durum bildirimi az önce gönderildi');
+  u._sosAt = Date.now();
+  const contacts = u.emergencyContacts || [];
+  const link = p ? `https://maps.google.com/?q=${p.lat.toFixed(6)},${p.lng.toFixed(6)}` : '';
+  const text = `ACİL: ${u.name} acil durum bildirdi.${p?.address ? ' ' + p.address + '.' : ''} Konum: ${link} - Yolda Kaldık`;
+  let sent = 0;
+  if (sms.configured()) {
+    for (const c of contacts) {
+      try { await sms.send(c.phone, text); sent++; } catch (e) { console.error('SOS SMS:', e.message); }
+    }
+  }
+  db().users.filter((x) => x.role === 'admin').forEach((a) => notify(a.id, '🆘 Acil durum bildirimi', `${u.name} (0${u.phone}) · ${p?.address || link}`, { url: '/admin' }));
+  res.json({ sent, contacts: contacts.length, smsLive: !!sms.configured(), text });
+}));
+
 function luhn(num) {
   let sum = 0;
   let dbl = false;
@@ -804,6 +1140,9 @@ app.get('/api/admin/stats', admin, (req, res) => {
     activeSubs: drivers.filter(subActive).length,
     onlineDrivers: drivers.filter((u) => u.driver.online && subActive(u)).length,
     activeJobs: d.jobs.filter((j) => ACTIVE.includes(j.status)).length,
+    scheduledJobs: d.jobs.filter((j) => j.status === 'scheduled').length,
+    pendingApprovals: drivers.filter((u) => Object.values(u.driver.docs || {}).some((x) => x.status === 'pending')).length,
+    smsLive: !!sms.configured(),
     completedJobs: d.jobs.filter((j) => j.status === 'completed').length,
     gmv: d.jobs.filter((j) => j.status === 'completed').reduce((s, j) => s + j.price.total, 0),
     subRevenueMonth: d.payments.filter(month).reduce((s, p) => s + p.total, 0),
@@ -811,6 +1150,30 @@ app.get('/api/admin/stats', admin, (req, res) => {
     demo: DEMO_MODE,
   });
 });
+app.get('/api/admin/approvals', admin, (req, res) => {
+  const list = db().users.filter((u) => u.role === 'driver' && Object.values(u.driver.docs || {}).some((d) => d.status === 'pending')).map(publicUser);
+  res.json({ drivers: list, docTypes: DOC_TYPES });
+});
+app.post('/api/admin/drivers/:id/docs', admin, wrap((req, res) => {
+  const u = db().users.find((x) => x.id === req.params.id && x.role === 'driver');
+  if (!u) throw new Error('Çekici bulunamadı');
+  const status = req.body?.status === 'rejected' ? 'rejected' : 'approved';
+  const types = req.body?.type === 'all' ? Object.keys(u.driver.docs || {}).filter((k) => u.driver.docs[k].status === 'pending') : [req.body?.type];
+  types.forEach((t) => {
+    const d = u.driver.docs?.[t];
+    if (!d) return;
+    d.status = status;
+    d.note = String(req.body?.note || '').slice(0, 200);
+    d.reviewedAt = new Date().toISOString();
+  });
+  store.save();
+  const st = approvalStatus(u);
+  if (st === 'approved') notify(u.id, 'Belgeleriniz onaylandı ✅', 'Artık çevrimiçi olup iş alabilirsiniz.', { url: '/cekici' });
+  else if (status === 'rejected') notify(u.id, 'Belgeniz reddedildi', `${types.map((t) => DOC_TYPES[t]).join(', ')}${req.body?.note ? ': ' + req.body.note : ''}. Lütfen yeniden yükleyin.`, { url: '/cekici' });
+  // Firma K belgesi onaylanınca şoförler de açılabilir
+  if (u.driver.isFirmOwner && types.includes('kbelgesi')) fleetMembers(u).forEach((m) => approvalStatus(m) === 'approved' && notify(m.id, 'Hesabınız onaylandı ✅', 'Firmanızın belgeleri onaylandı, iş alabilirsiniz.'));
+  res.json({ user: publicUser(u) });
+}));
 app.get('/api/admin/users', admin, (req, res) => {
   const role = req.query.role;
   res.json({ users: db().users.filter((u) => !role || u.role === role).map(publicUser).reverse() });
@@ -930,6 +1293,26 @@ io.on('connection', (socket) => {
   });
 });
 
+// Randevulu talepler: saatinden 45 dk önce çekici aramaya başla, 2 saat kala hatırlat
+setInterval(() => {
+  const now = Date.now();
+  db().jobs.forEach((j) => {
+    if (j.status !== 'scheduled') return;
+    const t = new Date(j.scheduledAt).getTime();
+    if (!j.remindedAt && t - now <= 2 * 60 * 60 * 1000 && t - now > SCHEDULE_LEAD_MS) {
+      j.remindedAt = new Date().toISOString();
+      notify(j.customerId, 'Randevunuz yaklaşıyor ⏰', `${fmtDate(j.scheduledAt)} · ${P.SERVICES[j.service].name}. Çekiciniz saatinden önce atanacak.`, { jobId: j.id });
+      store.save();
+    }
+    if (t - now <= SCHEDULE_LEAD_MS) {
+      pushTimeline(j, 'searching', 'Randevu saati yaklaştı, çekici aranıyor');
+      notify(j.customerId, 'Randevunuz için çekici aranıyor 🚛', `${fmtDate(j.scheduledAt)} randevunuz için en yakın çekici aranıyor.`, { jobId: j.id });
+      broadcastJob(j);
+      dispatch(j);
+    }
+  });
+}, 30 * 1000);
+
 // Konum güncellemesi 10 dk gelmeyen çekicileri çevrimdışı yap; paket süresi bitenleri kapat
 setInterval(() => {
   let changed = false;
@@ -964,8 +1347,10 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 
 store
   .load()
-  .then(() => {
+  .then(async () => {
     bootstrap();
+    await files.init(store.pool(), db().meta.jwtSecret);
+    if (!sms.configured()) console.warn('UYARI: SMS sağlayıcı tanımlı değil — doğrulama kodları ekranda gösterilecek (SMS_PROVIDER ayarlayın).');
     server.listen(PORT, () => console.log(`Yolda Kaldık çalışıyor: http://localhost:${PORT} (demo modu: ${DEMO_MODE ? 'açık' : 'kapalı'}, kalıcı veritabanı: ${store.persistent() ? 'evet' : 'HAYIR'})`));
   })
   .catch((e) => {
