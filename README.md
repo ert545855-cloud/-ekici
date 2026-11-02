@@ -68,7 +68,8 @@ Varsayılan: telefon `05000000000`, şifre `admin1234`. Render’da `ADMIN_PHONE
 | `JWT_SECRET` | otomatik | Oturum imzalama anahtarı |
 | `ADMIN_PHONE`, `ADMIN_PASSWORD` | yukarıda | Yönetici hesabı |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | otomatik | Push bildirim anahtarları (sabitlemek için) |
-| `DATA_DIR` | `./data` | Veritabanı dosyasının klasörü |
+| `DATABASE_URL` | — | PostgreSQL bağlantı adresi. **Canlıda zorunlu**; yoksa veriler kalıcı olmaz. |
+| `DATA_DIR` | `./data` | Yerel geliştirmede veri dosyasının klasörü |
 | `SUPPORT_PHONE` | 4440000 | Uygulamadaki destek hattı |
 | `OFFER_RADIUS_KM` | 40 | Talebin iletileceği çekici yarıçapı |
 | `MAPBOX_TOKEN` | — | Mapbox public token (`pk.` ile başlar). Harita, adres arama ve rota için. |
@@ -99,7 +100,7 @@ npm start
 
 ## Canlıya geçmeden önce
 
-- **Kalıcı veri:** Veriler `data/db.json` dosyasında tutulur. Render’ın ücretsiz planında disk kalıcı değildir; her yeniden başlatmada veriler sıfırlanır. Kalıcılık için ücretli planda bir **Persistent Disk** ekleyip `DATA_DIR`’i ona yönlendirin ya da PostgreSQL’e geçin (`src/db.js` tek noktadır).
+- **Kalıcı veri:** `DATABASE_URL` (PostgreSQL) tanımlıysa tüm hesaplar ve kayıtlar veritabanında kalıcı tutulur. Tanımlı değilse yerel dosya kullanılır ve Render'da her yeniden başlatmada veriler silinir.
 - **Ödeme:** Paket ödemesi şu an simülasyondur (kart doğrulanır ama çekim yapılmaz). `server.js` içindeki `/api/driver/subscription` noktasına iyzico / PayTR entegrasyonu bağlanmalıdır.
 - **SMS doğrulama:** Kayıtta telefon numarası OTP ile doğrulanmıyor; canlıda eklenmeli.
 - `DEMO_MODE=false` yapın ve `YKDEMO` kodunu kapatın.
@@ -109,5 +110,5 @@ npm start
 
 - `server.js` — Express + Socket.IO; REST API, gerçek zamanlı konum/durum, web push, demo çekici simülasyonu
 - `src/pricing.js` — hizmetler, fiyatlandırma, indirim kodu doğrulama
-- `src/db.js` — JSON dosya veritabanı
+- `src/db.js` — veri katmanı: PostgreSQL (JSONB) veya yerel JSON dosyası
 - `public/` — müşteri (`index.html`), çekici (`cekici.html`), yönetim (`admin.html`) arayüzleri, `sw.js` service worker

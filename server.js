@@ -17,7 +17,6 @@ const OFFER_RADIUS_KM = Number(process.env.OFFER_RADIUS_KM || 40);
 const SEARCH_TIMEOUT_MS = 3 * 60 * 1000;
 const DAY = 24 * 60 * 60 * 1000;
 
-store.load();
 const db = () => store.db;
 
 // ---------- Kurulum: gizli anahtarlar, VAPID, admin, varsayılan kodlar ----------
@@ -422,7 +421,7 @@ app.use(
 app.use('/vendor/googlemutant', express.static(path.join(__dirname, 'node_modules', 'leaflet.gridlayer.googlemutant', 'dist'), { maxAge: '30d' }));
 app.use('/vendor/leaflet', express.static(path.join(__dirname, 'node_modules', 'leaflet', 'dist'), { maxAge: '30d' }));
 
-app.get('/health', (req, res) => res.json({ ok: true, demo: DEMO_MODE }));
+app.get('/health', (req, res) => res.json({ ok: true, demo: DEMO_MODE, persistent: store.persistent() }));
 app.get('/api/config', (req, res) =>
   res.json({ services: P.SERVICES, roadside: P.ROADSIDE, subscriptionPrice: P.SUBSCRIPTION_PRICE, vapidPublicKey: db().meta.vapid.publicKey, demo: DEMO_MODE, googleMapsKey: process.env.GOOGLE_MAPS_API_KEY || '', mapboxToken: process.env.MAPBOX_TOKEN || '', support: process.env.SUPPORT_PHONE || '4440000' })
 );
@@ -955,5 +954,21 @@ setInterval(() => {
   if (changed) store.save();
 }, 60 * 1000);
 
-bootstrap();
-server.listen(PORT, () => console.log(`Yolda Kaldık çalışıyor: http://localhost:${PORT} (demo modu: ${DEMO_MODE ? 'açık' : 'kapalı'})`));
+async function shutdown(sig) {
+  console.log(`${sig} alındı, veriler kaydediliyor…`);
+  try { await store.flush(); } catch (e) { console.error(e.message); }
+  process.exit(0);
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+store
+  .load()
+  .then(() => {
+    bootstrap();
+    server.listen(PORT, () => console.log(`Yolda Kaldık çalışıyor: http://localhost:${PORT} (demo modu: ${DEMO_MODE ? 'açık' : 'kapalı'}, kalıcı veritabanı: ${store.persistent() ? 'evet' : 'HAYIR'})`));
+  })
+  .catch((e) => {
+    console.error('Veritabanına bağlanılamadı:', e.message);
+    process.exit(1);
+  });
