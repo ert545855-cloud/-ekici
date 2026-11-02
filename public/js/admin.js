@@ -34,7 +34,7 @@
     };
   }
 
-  const TABS = [['dash', 'Özet'], ['approvals', 'Belge onayı'], ['codes', 'İndirim kodları'], ['drivers', 'Çekiciler'], ['customers', 'Müşteriler'], ['jobs', 'Talepler'], ['payments', 'Ödemeler'], ['push', 'Bildirim gönder']];
+  const TABS = [['dash', 'Özet'], ['approvals', 'Belge onayı'], ['codes', 'İndirim kodları'], ['drivers', 'Çekiciler'], ['customers', 'Müşteriler'], ['jobs', 'Talepler'], ['payments', 'Ödemeler'], ['push', 'Bildirim gönder'], ['email', 'E-posta (Bird)']];
   function renderMain() {
     app.innerHTML = `<div class="screen full"><div class="page" style="max-width:1180px">
       <div class="row between" style="flex-wrap:wrap;gap:10px"><div class="brand" style="display:inline-flex"><span class="logo"><img src="/icons/logo-64.png" alt=""></span>YOLDA KALDIK · YÖNETİM</div>
@@ -43,7 +43,7 @@
       <div id="content"></div></div></div>`;
     $$('[data-t]').forEach((b) => (b.onclick = () => { S.tab = b.dataset.t; renderMain(); }));
     $('#lo').onclick = () => { auth.token = null; location.reload(); };
-    ({ dash, approvals, codes, drivers, customers, jobs, payments, push })[S.tab]();
+    ({ dash, approvals, codes, drivers, customers, jobs, payments, push, email })[S.tab]();
     api('/admin/stats').then((s) => { const b = document.querySelector('[data-t=approvals]'); if (b && s.pendingApprovals) b.innerHTML = `Belge onayı <span class="badge red" style="padding:1px 7px;margin-left:4px">${s.pendingApprovals}</span>`; }).catch(() => {});
   }
   const C = () => $('#content');
@@ -209,6 +209,34 @@
     C().innerHTML = `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Fatura</th><th>Çekici</th><th>Tutar</th><th>İndirim</th><th>Ödenen</th><th>Dönem</th><th>Tarih</th></tr></thead><tbody>
       ${r.payments.map((p) => `<tr><td><b>${p.no}</b></td><td>${h(p.user?.name || '—')}</td><td>${tl(p.amount)}</td><td>${p.discount ? '−' + tl(p.discount) + ' (' + h(p.code) + ')' : '—'}</td><td><b>${tl(p.total)}</b></td><td class="small">${d8(p.period.from)} – ${d8(p.period.until)}</td><td class="small">${dt(p.createdAt)}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">Henüz ödeme yok</td></tr>'}
     </tbody></table></div>`;
+  }
+
+  // ---------- E-posta (Bird) ----------
+  async function email() {
+    const b = await api('/admin/bird');
+    C().innerHTML = `
+      <div class="card stack" style="max-width:720px">
+        <div class="row between"><h2 style="margin:0">Bird e-posta bağlantısı</h2>${b.configured ? '<span class="badge green">Bağlı</span>' : '<span class="badge red">Bağlı değil</span>'}</div>
+        ${!b.configured ? '<p class="small">Render ortam değişkenlerine <code>BIRD_API_KEY</code> ekleyin.</p>' : `
+        <div class="stat-grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">
+          <div class="stat"><div class="k">E-postası olan</div><div class="v">${b.counts.withEmail}</div></div>
+          <div class="stat"><div class="k">İzinli müşteri</div><div class="v">${b.counts.consentCustomers}</div></div>
+          <div class="stat"><div class="k">İzinli çekici</div><div class="v">${b.counts.consentDrivers}</div></div>
+          <div class="stat"><div class="k">Bird'e aktarılan</div><div class="v">${b.counts.synced}</div></div>
+        </div>
+        <p class="small">Gönderen: <b>${h(b.from)}</b> · Bölge: ${h(b.region)}</p>
+        ${b.sharedSender ? '<div class="card flat small" style="border-color:var(--amber)"><b>Paylaşımlı test adresi kullanılıyor.</b> Bird bu adresten yalnızca Bird çalışma alanınızın üyelerine ve günde en fazla 50 alıcıya gönderir. Müşterilere kampanya ve fiş gönderebilmek için kendi alan adınızı (ör. yoldakaldik.com) Bird\'de doğrulayın ve <code>BIRD_FROM</code> değişkenini <code>bilgi@alanadiniz.com</code> yapın.</div>' : ''}
+        <div class="row" style="flex-wrap:wrap"><button class="btn sm" id="bSync">Tüm kişileri Bird'e aktar</button><a class="btn sm ghost" href="https://bird.com/dashboard" target="_blank" rel="noopener">Bird'de kampanya oluştur →</a></div>
+        <div class="row"><input class="input grow" id="bTo" type="email" placeholder="Test e-postası gönderilecek adres"><button class="btn sm ghost" id="bTest">Test gönder</button></div>
+        <div class="small muted"><b>Nasıl çalışır?</b><br>• Kampanya onayı veren müşteriler “Yolda Kaldık · Müşteriler (izinli)”, çekiciler “Yolda Kaldık · Çekiciler (izinli)” kitlesine otomatik eklenir; onayı kapatan çıkarılır.<br>• Kampanyayı Bird panelinde <b>E-posta → Broadcasts</b> bölümünden şablon seçip bu kitleye gönderirsiniz. Bird abonelikten çıkma bağlantısını kendisi ekler.<br>• Hoş geldin, kurtarma fişi ve paket ödeme e-postaları uygulama tarafından otomatik gönderilir.</div>`}
+      </div>`;
+    $('#bSync') && ($('#bSync').onclick = async (e) => {
+      e.target.disabled = true;
+      try { const r = await api('/admin/bird/sync', { body: {} }); toast(`${r.ok} kişi aktarıldı`, r.failed ? `${r.failed} hata: ${r.lastError}` : ''); email(); } catch (err) { fail(err); e.target.disabled = false; }
+    });
+    $('#bTest') && ($('#bTest').onclick = async () => {
+      try { const r = await api('/admin/bird/test', { body: { to: $('#bTo').value } }); toast('Test e-postası Bird\'e iletildi', `Durum: ${r.status || 'kabul edildi'}`); } catch (err) { fail(err); }
+    });
   }
 
   function push() {

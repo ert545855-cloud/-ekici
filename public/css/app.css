@@ -474,3 +474,5 @@ a.btn { text-decoration: none; }
 .kasko .k-price { color: var(--brand-2); font-weight: 800; }
 .kasko.on { border-color: var(--brand); background: var(--brand-soft); }
 .pl.kasko-line { color: var(--brand-2); font-weight: 600; }
+.steps-list { padding-left: 22px; margin: 10px 0 14px; display: grid; gap: 8px; font-size: 15px; }
+.kbd { display: inline-block; border: 1.5px solid var(--line); border-radius: 6px; padding: 0 6px; font-size: 13px; }

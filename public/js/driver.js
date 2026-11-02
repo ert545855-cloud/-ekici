@@ -44,6 +44,8 @@
               <div class="row"><label class="field grow"><span>Araç plakası</span><input name="plate" required placeholder="34 ABC 123" style="text-transform:uppercase"></label>
               <label class="field grow"><span>Araç</span><input name="vehicle" placeholder="Kayar kasa, ahtapot…"></label></div>
               <label class="field"><span>Vergi no / TC (fatura için, isteğe bağlı)</span><input name="taxNo" inputmode="numeric"></label>
+              <label class="field"><span>E-posta (fatura ve bilgilendirme için)</span><input name="email" type="email" inputmode="email" autocomplete="email" placeholder="ornek@firma.com"></label>
+              <label class="check"><input type="checkbox" name="marketingConsent" value="1"><span class="grow small">Çekicilere özel kampanya ve duyuruları e-posta ile almak istiyorum (ticari elektronik ileti onayı).</span></label>
               <div class="field"><span>Verdiğiniz hizmetler</span><div class="stack" style="margin-top:0">${svcs.map(([k, s], i) => `<label class="check ${i === 0 ? 'on' : ''}"><input type="checkbox" name="svc" value="${k}" ${i === 0 ? 'checked' : ''}><span class="grow">${h(s.name)}<br><span class="small muted">${h(s.desc)}</span></span></label>`).join('')}</div></div>` : ''}
             <button class="btn" type="submit">${mode === 'login' ? 'Giriş yap' : 'Hesabımı oluştur'}</button>
           </form>
@@ -74,7 +76,7 @@
       const fd = Object.fromEntries(new FormData(f));
       const body = mode === 'login'
         ? { phone: fd.phone, password: fd.password, role: 'driver' }
-        : { role: 'driver', name: fd.name, phone: fd.phone, password: fd.password, driver: { plate: fd.plate, vehicle: fd.vehicle, company: fd.company, taxNo: fd.taxNo, firm: !!fd.firm, services: $$('input[name=svc]:checked', f).map((x) => x.value) } };
+        : { role: 'driver', name: fd.name, phone: fd.phone, password: fd.password, email: fd.email, marketingConsent: !!fd.marketingConsent, driver: { plate: fd.plate, vehicle: fd.vehicle, company: fd.company, taxNo: fd.taxNo, firm: !!fd.firm, services: $$('input[name=svc]:checked', f).map((x) => x.value) } };
       const btn = f.querySelector('button[type=submit]');
       btn.disabled = true;
       try {
@@ -106,7 +108,7 @@
     const call = perms.call();
     const card = (k, icon, title, text, state) => `
       <div class="perm ${state === 'granted' ? 'ok' : ''}"><div class="pi">${icon}</div><div class="pb"><b>${title}</b><span>${text}</span></div>
-      ${state === 'granted' ? '<span class="badge green">Açık</span>' : state === 'denied' ? '<span class="badge red">Kapalı</span>' : state === 'unsupported' ? '<span class="badge">Yok</span>' : `<button class="btn sm" data-ask="${k}">İzin ver</button>`}</div>`;
+      ${state === 'granted' ? '<span class="badge green">Açık</span>' : state === 'denied' ? '<span class="badge red">Kapalı</span>' : state === 'unsupported' ? '<button class="btn sm amber" data-ask="install">Nasıl?</button>' : `<button class="btn sm" data-ask="${k}">İzin ver</button>`}</div>`;
     app.innerHTML = `<div class="screen full"><div class="page stack">
       <div class="brand" style="display:inline-flex;margin-top:8px"><span class="logo"><img src="/icons/logo-64.png" alt=""></span>ÇEKİCİ PANELİ</div>
       <h1 style="margin-top:20px">İş alabilmeniz için gerekli izinler</h1>
@@ -120,6 +122,7 @@
         if (b.dataset.ask === 'loc') S.me = await YK.getPosition();
         if (b.dataset.ask === 'noti') await YK.enablePush(S.cfg.vapidPublicKey);
         if (b.dataset.ask === 'call') perms.setCall('granted');
+        if (b.dataset.ask === 'install') return YK.installHelp('iPhone\'da yeni iş bildirimleri yalnızca ana ekrana eklenen uygulamada gelir.');
       } catch (e) { fail(e); }
       renderPerms();
     }));
@@ -163,7 +166,7 @@
     startTracking();
     loadActive();
     refreshUnread();
-    if (perms.notification() === 'granted') YK.enablePush(S.cfg.vapidPublicKey).catch(() => {});
+    if (perms.notification() === 'granted') YK.enablePush(S.cfg.vapidPublicKey, { silent: true }).catch(() => {});
     if (location.hash === '#paket') setTab('plan');
   }
   function setTab(t) {
@@ -738,12 +741,19 @@
         ${Object.entries(S.cfg.services).map(([k, s]) => `<label class="check ${u.driver.services.includes(k) ? 'on' : ''}"><input type="checkbox" class="sv" value="${k}" ${u.driver.services.includes(k) ? 'checked' : ''}><span class="grow">${h(s.name)}</span></label>`).join('')}
         <button class="btn" id="saveV">Kaydet</button>
       </div>
+      <h2>E-posta</h2>
+      <div class="card stack">
+        <label class="field"><span>E-posta (fatura ve bilgilendirme)</span><input id="emIn" type="email" inputmode="email" value="${h(u.email || '')}" placeholder="ornek@firma.com"></label>
+        <label class="check ${u.marketingConsent?.email ? 'on' : ''}"><input type="checkbox" id="emMc" ${u.marketingConsent?.email ? 'checked' : ''}><span class="grow small">Kampanya ve duyuruları e-posta ile almak istiyorum</span></label>
+        <button class="btn ghost" id="emSave">E-postayı kaydet</button>
+      </div>
       <h2>İzinler ve bildirimler</h2>
       <div class="list">
         <button class="li" data-p="loc"><span class="lic">${I.pin}</span><span class="grow"><b>Konum</b></span>${st(loc)}</button>
         <button class="li" data-p="noti"><span class="lic">${I.bell}</span><span class="grow"><b>Bildirimler</b></span>${st(noti)}</button>
         <button class="li" data-p="call"><span class="lic">${I.phone}</span><span class="grow"><b>Arama</b></span>${st(perms.call())}</button>
         <button class="li" id="snd"><span class="lic">${I.bell}</span><span class="grow"><b>Yeni iş sesini dene</b></span><span class="chev">${I.chev}</span></button>
+        ${!YK.isStandalone() ? `<button class="li" id="installRow"><span class="lic">${I.home}</span><span class="grow"><b>Ana ekrana ekle</b><br><span class="small muted">${YK.isIOS() ? 'iPhone\'da iş bildirimleri için gerekli' : 'Bildirimler daha güvenilir çalışır'}</span></span><span class="chev">${I.chev}</span></button>` : ''}
         <button class="li" id="tp"><span class="lic">${I.bell}</span><span class="grow"><b>Test bildirimi gönder</b></span><span class="chev">${I.chev}</span></button>
       </div>
       <h2>Görünüm</h2>
@@ -755,6 +765,9 @@
       </div></div>`;
     $$('.check input').forEach((c) => (c.onchange = () => c.closest('.check').classList.toggle('on', c.checked)));
     $('#docsCard').onclick = openDocs;
+    $('#emSave').onclick = async () => {
+      try { S.user = (await api('/me', { method: 'PATCH', body: { email: $('#emIn').value.trim(), marketingConsent: $('#emMc').checked && !!$('#emIn').value.trim() } })).user; toast('Kaydedildi'); renderAccount(); } catch (e) { fail(e); }
+    };
     $('#saveV').onclick = async () => {
       try { S.user = (await api('/me', { method: 'PATCH', body: { driver: { plate: $('#pl').value, vehicle: $('#vh').value, company: $('#co').value, services: $$('.sv:checked').map((x) => x.value) } } })).user; toast('Kaydedildi'); renderAccount(); } catch (e) { fail(e); }
     };
@@ -767,7 +780,14 @@
       renderAccount();
     }));
     $('#snd').onclick = () => YK.alertSound(4);
-    $('#tp').onclick = () => api('/push/test', { body: {} }).catch(fail);
+    $('#tp').onclick = async () => {
+      try {
+        await YK.enablePush(S.cfg.vapidPublicKey);
+        const r = await api('/push/test', { body: {} });
+        toast(r.devices ? 'Test bildirimi gönderildi' : 'Bu cihaz bildirime kayıtlı değil', r.devices ? `${r.devices} cihaza gönderildi.` : 'Bildirim iznini açıp tekrar deneyin.', !r.devices);
+      } catch (e) { fail(e); }
+    };
+    $('#installRow') && ($('#installRow').onclick = () => YK.installHelp());
     $$('#themeSeg button').forEach((b) => (b.onclick = () => { try { localStorage.setItem('yk:theme', b.dataset.v); } catch {} YK.applyTheme(); renderAccount(); }));
     $('#logout').onclick = async () => {
       if (!(await confirmBox('Çıkış yap', 'Çıkış yaptığınızda çevrimdışı olursunuz.', 'Çıkış yap'))) return;

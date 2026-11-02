@@ -57,6 +57,8 @@
             ${mode === 'register' ? '<label class="field"><span>Ad Soyad</span><input name="name" required autocomplete="name" placeholder="Adınız Soyadınız"></label>' : ''}
             <label class="field"><span>Cep telefonu</span><input name="phone" required inputmode="tel" autocomplete="tel" placeholder="05xx xxx xx xx"></label>
             <label class="field"><span>Şifre</span><input name="password" type="password" required minlength="6" autocomplete="${mode === 'login' ? 'current-password' : 'new-password'}" placeholder="En az 6 karakter"></label>
+            ${mode === 'register' ? `<label class="field"><span>E-posta (isteğe bağlı · fiş ve bilgilendirme için)</span><input name="email" type="email" inputmode="email" autocomplete="email" placeholder="ornek@mail.com"></label>
+            <label class="check"><input type="checkbox" name="marketingConsent" value="1"><span class="grow small">Kampanya ve fırsatlardan e-posta ile haberdar olmak istiyorum. <span class="muted">(Ticari elektronik ileti onayı · istediğiniz zaman Hesap'tan kapatabilirsiniz)</span></span></label>` : ''}
             ${mode === 'register' ? `<label class="field"><span>Davet kodu (isteğe bağlı)</span><input name="referral" value="${h(ref)}" placeholder="Örn. YKAB12C" style="text-transform:uppercase"></label>` : ''}
             <button class="btn" type="submit">${mode === 'login' ? 'Giriş yap' : 'Hesabımı oluştur'}</button>
           </form>
@@ -87,7 +89,7 @@
           r = await YK.otpModal({
             phone: fd.phone,
             request: () => api('/auth/otp', { body: { phone: fd.phone, role: 'customer', purpose: 'register' } }),
-            submit: (otp) => api('/auth/register', { body: { ...fd, role: 'customer', otp } }),
+            submit: (otp) => api('/auth/register', { body: { ...fd, marketingConsent: !!fd.marketingConsent, role: 'customer', otp } }),
           });
           if (!r) return;
         }
@@ -113,7 +115,7 @@
       <div class="perm ${state === 'granted' ? 'ok' : ''}" data-k="${k}">
         <div class="pi">${icon}</div>
         <div class="pb"><b>${title}</b><span>${text}</span></div>
-        ${state === 'granted' ? '<span class="badge green">Açık</span>' : state === 'denied' ? '<span class="badge red">Kapalı</span>' : state === 'unsupported' ? '<span class="badge">Desteklenmiyor</span>' : `<button class="btn sm" data-ask="${k}">İzin ver</button>`}
+        ${state === 'granted' ? '<span class="badge green">Açık</span>' : state === 'denied' ? '<span class="badge red">Kapalı</span>' : state === 'unsupported' ? '<button class="btn sm amber" data-ask="install">Nasıl?</button>' : `<button class="btn sm" data-ask="${k}">İzin ver</button>`}
       </div>`;
     app.innerHTML = `
       <div class="screen full"><div class="page stack">
@@ -132,6 +134,7 @@
         if (k === 'loc') { const p = await YK.getPosition(); S.center = p; }
         if (k === 'noti') await YK.enablePush(S.cfg.vapidPublicKey);
         if (k === 'call') perms.setCall('granted');
+        if (k === 'install') return YK.installHelp('iPhone\'da bildirimler yalnızca ana ekrana eklenen uygulamada çalışır.');
       } catch (e) { fail(e); }
       renderPerms();
     }));
@@ -170,7 +173,7 @@
     refreshUnread();
     loadActiveJob();
     // Push aboneliğini tazele (izin önceden verildiyse)
-    if (perms.notification() === 'granted') YK.enablePush(S.cfg.vapidPublicKey).catch(() => {});
+    if (perms.notification() === 'granted') YK.enablePush(S.cfg.vapidPublicKey, { silent: true }).catch(() => {});
   }
 
   function setTab(t) {
@@ -750,6 +753,27 @@
     else { try { await navigator.clipboard.writeText(text); } catch {} toast('Davet bağlantısı kopyalandı', S.user.referralCode); }
   }
 
+  async function testPush() {
+    try {
+      await YK.enablePush(S.cfg.vapidPublicKey);
+      const r = await api('/push/test', { body: {} });
+      toast(r.devices ? 'Test bildirimi gönderildi' : 'Bu cihaz bildirime kayıtlı değil', r.devices ? `${r.devices} cihaza gönderildi. Birkaç saniye içinde gelmezse telefon ayarlarından bildirim iznini kontrol edin.` : 'Bildirim iznini açıp tekrar deneyin.', !r.devices);
+    } catch (e) { fail(e); }
+  }
+
+  function emailModal(u, after, withConsent = false) {
+    const m = modal(`<h3>E-posta adresi</h3>
+      <label class="field"><span>E-posta</span><input id="emIn" type="email" inputmode="email" autocomplete="email" value="${h(u.email || '')}" placeholder="ornek@mail.com"></label>
+      <label class="check" style="margin-top:10px"><input type="checkbox" id="emMc" ${u.marketingConsent?.email || withConsent ? 'checked' : ''}><span class="grow small">Kampanya ve fırsatlardan e-posta ile haberdar olmak istiyorum (ticari elektronik ileti onayı).</span></label>
+      <button class="btn" id="emOk" style="margin-top:14px">Kaydet</button>`);
+    $('#emOk', m.el).onclick = async () => {
+      try {
+        S.user = (await api('/me', { method: 'PATCH', body: { email: $('#emIn', m.el).value.trim(), marketingConsent: $('#emMc', m.el).checked && !!$('#emIn', m.el).value.trim() } })).user;
+        m.close(); toast('E-posta kaydedildi'); after && after();
+      } catch (e) { fail(e); }
+    };
+  }
+
   // ---------------- Randevulu talepler ----------------
   const fmtWhen = (s) => new Date(s).toLocaleString('tr-TR', { weekday: 'short', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
   const toLocalInput = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -879,12 +903,22 @@
       <h2>İndirim kodu</h2>
       <div class="row"><input class="input grow" id="cc" placeholder="Kodu girin" style="text-transform:uppercase"><button class="btn sm" id="ccBtn">Kontrol et</button></div>
       <p class="small muted">Geçerli kodu kurtarma talebi oluştururken uygulayabilirsiniz.</p>
+      <h2>E-posta</h2>
+      <div class="list">
+        <button class="li" id="emailRow"><span class="lic">${I.msg}</span><span class="grow"><b>${u.email ? h(u.email) : 'E-posta ekle'}</b><br><span class="small muted">Kurtarma fişleri ve hesap bilgilendirmeleri</span></span><span class="chev">${I.chev}</span></button>
+        <div class="li"><span class="lic">${I.gift}</span><span class="grow"><b>Kampanya e-postaları</b><br><span class="small muted">İndirim ve fırsatlardan haberdar olun</span></span><label class="switch"><input type="checkbox" id="mcIn" ${u.marketingConsent?.email ? 'checked' : ''}><span></span></label></div>
+      </div>
       <h2>Diğer</h2>
       <div class="list">
         <a class="li" href="/cekici" style="color:inherit;text-decoration:none"><span class="lic">${I.tow}</span><span class="grow"><b>Çekici hesabı aç</b><br><span class="small muted">Aylık paketle sınırsız iş alın</span></span><span class="chev">${I.chev}</span></a>
         <button class="li" id="logout"><span class="lic">${I.logout}</span><span class="grow"><b>Çıkış yap</b></span></button>
       </div></div>`;
     $('#inv2').onclick = shareInvite;
+    $('#emailRow').onclick = () => emailModal(u, renderAccount);
+    $('#mcIn').onchange = async (e) => {
+      if (e.target.checked && !u.email) { e.target.checked = false; return emailModal(u, renderAccount, true); }
+      try { S.user = (await api('/me', { method: 'PATCH', body: { marketingConsent: e.target.checked } })).user; toast(e.target.checked ? 'Kampanya e-postaları açıldı' : 'Kampanya e-postaları kapatıldı'); } catch (err) { fail(err); e.target.checked = !e.target.checked; }
+    };
     $$('[data-ec]').forEach((b) => (b.onclick = async () => {
       try { S.user = (await api('/me', { method: 'PATCH', body: { emergencyContacts: u.emergencyContacts.filter((_, i) => i !== +b.dataset.ec) } })).user; renderAccount(); } catch (e) { fail(e); }
     }));
@@ -934,6 +968,7 @@
       </div>
       ${loc === 'denied' || noti === 'denied' ? '<p class="small muted">Engellenen izinleri tarayıcınızın site ayarlarından (adres çubuğundaki kilit simgesi) açabilirsiniz.</p>' : ''}
       <h2>Bildirimler</h2>
+      ${!YK.isStandalone() ? `<div class="list" style="margin-bottom:10px"><button class="li" id="installRow"><span class="lic" style="background:var(--brand-soft);color:var(--brand-2)">${I.home}</span><span class="grow"><b>Ana ekrana ekle</b><br><span class="small muted">${YK.isIOS() ? 'iPhone\'da bildirimler için gerekli' : 'Uygulama gibi açılır, bildirimler daha güvenilir çalışır'}</span></span><span class="chev">${I.chev}</span></button></div>` : ''}
       <div class="list"><button class="li" id="testPush"><span class="lic">${I.bell}</span><span class="grow"><b>Test bildirimi gönder</b></span><span class="chev">${I.chev}</span></button></div>
       <h2>Görünüm</h2>
       <div class="seg" id="themeSeg"><button data-v="auto" class="${theme === 'auto' ? 'on' : ''}">Otomatik</button><button data-v="light" class="${theme === 'light' ? 'on' : ''}">Açık</button><button data-v="dark" class="${theme === 'dark' ? 'on' : ''}">Koyu</button></div>
@@ -952,7 +987,8 @@
       } catch (e) { fail(e); }
       renderSettings();
     }));
-    $('#testPush').onclick = () => api('/push/test', { body: {} }).catch(fail);
+    $('#testPush').onclick = testPush;
+    $('#installRow') && ($('#installRow').onclick = () => YK.installHelp());
     $$('#themeSeg button').forEach((b) => (b.onclick = () => { try { localStorage.setItem('yk:theme', b.dataset.v); } catch {} YK.applyTheme(); renderSettings(); }));
     $('#faq').onclick = () => modal(`<h3>Sık sorulan sorular</h3>
       <p><b>Fiyat nasıl hesaplanıyor?</b><br><span class="muted">Hizmet türüne göre açılış ücreti + kilometre başı ücret. 22:00–06:00 arası %20 gece tarifesi uygulanır. Talep öncesinde toplam tutarı görürsünüz.</span></p>

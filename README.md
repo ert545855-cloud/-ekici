@@ -65,6 +65,12 @@ Martı TAG mantığında çalışan çekici çağırma uygulaması: müşteri ha
 - İsteğe bağlı **kasko güvencesi: +350 TL** (indirim kodundan etkilenmez; çekici kazancına dahil edilmez, yönetim panelinde ayrı raporlanır)
 - Ortam değişkenleri: `PRICE_KM_OTO`, `PRICE_KM_AGIR`, `PRICE_KM_MOTO`, `PRICE_BASE_OTO`, `PRICE_BASE_AGIR`, `PRICE_BASE_MOTO`, `KASKO_PRICE`
 
+**E-posta ve kampanyalar (Bird)**
+- Kayıtta ve Hesap'ta isteğe bağlı e-posta + ticari elektronik ileti onayı (varsayılan kapalı)
+- Onay verenler Bird'deki “Yolda Kaldık · Müşteriler/Çekiciler (izinli)” kitlelerine otomatik eklenir, onayı kapatan çıkarılır
+- Kampanyalar Bird panelinden (E-posta → Broadcasts) bu kitlelere gönderilir
+- Uygulama hoş geldin, kurtarma fişi ve paket ödeme e-postalarını Bird ile otomatik gönderir
+
 **Eşleşme kodu (güvenli teslim)**
 - Her talep için 4 haneli eşleşme kodu üretilir; kodu yalnızca müşteri görür (çekici ve yönetici göremez).
 - Çekici “Konuma vardım” dediğinde kod girme ekranı açılır. Kod doğrulanmadan araç yüklenemez, yol yardımı başlatılamaz ve iş tamamlanamaz.
@@ -107,6 +113,10 @@ Varsayılan: telefon `05000000000`, şifre `admin1234`. Render’da `ADMIN_PHONE
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` | — | Twilio bilgileri |
 | `FLEET_MAX_VEHICLES` | 10 | Firma paketine dahil en fazla araç (sahip dahil) |
 | `MIN_DAMAGE_PHOTOS` | 2 | Yükleme ve teslimde zorunlu en az fotoğraf |
+| `BIRD_API_KEY` | — | Bird (bird.com) API anahtarı: e-posta kişileri, kitleler ve işlem e-postaları |
+| `BIRD_AUDIENCE_CUSTOMERS`, `BIRD_AUDIENCE_DRIVERS` | — | Kampanya onayı verenlerin eklendiği Bird kitleleri |
+| `BIRD_FROM`, `BIRD_FROM_NAME` | onboarding@messagebird.dev | Gönderen adresi (kendi doğrulanmış alan adınız) |
+| `EXPO_ACCESS_TOKEN` | — | (İsteğe bağlı) Expo push güvenliği açıksa |
 | `GOOGLE_MAPS_API_KEY` | — | Google Maps tarayıcı anahtarı. Tanımlıysa Mapbox yerine Google kullanılır. |
 
 Harita sağlayıcı önceliği: **Google Maps → Mapbox → OpenStreetMap**. Bir sağlayıcı hata verirse (geçersiz anahtar, kota vb.) sıradakine otomatik geçilir.

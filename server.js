@@ -12,6 +12,7 @@ const store = require('./src/db');
 const P = require('./src/pricing');
 const sms = require('./src/sms');
 const files = require('./src/files');
+const bird = require('./src/bird');
 
 const PORT = process.env.PORT || 3000;
 const DEMO_MODE = (process.env.DEMO_MODE || 'true') !== 'false';
@@ -122,8 +123,8 @@ function approvalError(u) {
 
 function publicUser(u) {
   if (!u) return null;
-  const { passHash, pushSubs, ...rest } = u;
-  const out = { ...rest, pushEnabled: (pushSubs || []).length > 0, subscriptionActive: subActive(u) };
+  const { passHash, pushSubs, expoTokens, ...rest } = u;
+  const out = { ...rest, pushEnabled: (pushSubs || []).length + (expoTokens || []).length > 0, subscriptionActive: subActive(u) };
   if (u.role === 'driver') {
     const docs = {};
     Object.keys(DOC_TYPES).forEach((k) => {
@@ -222,13 +223,9 @@ function notify(userId, title, body, data = {}) {
   io.to('user:' + userId).emit('notify', n);
   const payload = JSON.stringify({ title, body, data: { ...data, url: data.url || (u.role === 'driver' ? '/cekici' : '/') } });
   (u.pushSubs || []).forEach((sub) => {
-    webpush.sendNotification(sub, payload, { TTL: 300, urgency: 'high' }).catch((err) => {
-      if (err.statusCode === 404 || err.statusCode === 410) {
-        u.pushSubs = u.pushSubs.filter((s) => s.endpoint !== sub.endpoint);
-        store.save();
-      }
-    });
+    webpush.sendNotification(sub, payload, { TTL: data.type === 'offer' ? 120 : 3600, urgency: 'high' }).catch((err) => dropDeadSub(u, sub, err));
   });
+  expoPush(u, title, body, { ...data, url: data.url || (u.role === 'driver' ? '/cekici' : '/') });
 }
 
 // Gerçek yol mesafesi: Mapbox Directions → OSRM → kuş uçuşu tahmini (null)
@@ -263,7 +260,34 @@ const driverShare = (j) => j.price.total - (j.price.kasko || 0);
 function notifyPushOnly(u, title, body, data = {}) {
   io.to('user:' + u.id).emit('chat:ping', { title, body, data });
   const payload = JSON.stringify({ title, body, data });
-  (u.pushSubs || []).forEach((sub) => webpush.sendNotification(sub, payload, { TTL: 120, urgency: 'high' }).catch(() => {}));
+  (u.pushSubs || []).forEach((sub) => webpush.sendNotification(sub, payload, { TTL: 600, urgency: 'high' }).catch((err) => dropDeadSub(u, sub, err)));
+  expoPush(u, title, body, data);
+}
+// iOS/Android uygulaması (Expo) bildirimleri
+function expoPush(u, title, body, data = {}) {
+  const tokens = u.expoTokens || [];
+  if (!tokens.length) return;
+  const offer = data.type === 'offer';
+  const msgs = tokens.map((t) => ({ to: t.token, title, body, data, sound: 'default', priority: 'high', channelId: offer ? 'jobs' : 'default', ttl: offer ? 120 : 3600, interruptionLevel: offer ? 'time-sensitive' : 'active' }));
+  fetch('https://exp.host/--/api/v2/push/send', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...(process.env.EXPO_ACCESS_TOKEN ? { Authorization: 'Bearer ' + process.env.EXPO_ACCESS_TOKEN } : {}) }, body: JSON.stringify(msgs) })
+    .then((r) => r.json())
+    .then((j) => {
+      (j.data || []).forEach((ticket, i) => {
+        if (ticket.status === 'error' && ticket.details?.error === 'DeviceNotRegistered') {
+          u.expoTokens = (u.expoTokens || []).filter((x) => x.token !== msgs[i].to);
+          store.save();
+        } else if (ticket.status === 'error') console.warn('Expo push:', ticket.message);
+      });
+    })
+    .catch((e) => console.warn('Expo push gönderilemedi:', e.message));
+}
+// Geçersiz (süresi dolmuş, başka anahtarla açılmış) abonelikleri sil; uygulama açılınca yeniden abone olunur
+function dropDeadSub(u, sub, err) {
+  const code = err?.statusCode;
+  if ([400, 401, 403, 404, 410].includes(code)) {
+    u.pushSubs = (u.pushSubs || []).filter((s) => s.endpoint !== sub.endpoint);
+    store.save();
+  } else console.warn('Push gönderilemedi:', code || err?.message);
 }
 
 // ---------- Demo çekiciler (gerçek çekici yokken akışı göstermek için) ----------
@@ -273,44 +297,97 @@ const BOT_VEHICLES = { oto: 'Ford Cargo Kayar Kasa', agir: 'Mercedes Actros Ahta
 function findDriver(id) {
   return bots.get(id) || db().users.find((u) => u.id === id && u.role === 'driver');
 }
-function ensureBots(center, service) {
-  if (!DEMO_MODE || !isPoint(center)) return;
-  const near = [...bots.values()].filter((b) => P.haversineKm(b.driver, center) < 6 && b.driver.services.includes(service || 'oto'));
-  if (near.length >= 4) return;
-  for (let i = near.length; i < 6; i++) {
-    const ang = Math.random() * Math.PI * 2;
-    const r = 0.6 + Math.random() * 3.5;
-    const svc = service || ['oto', 'oto', 'agir', 'moto', 'yol'][i % 5];
-    const id = 'bot_' + crypto.randomBytes(4).toString('hex');
-    bots.set(id, {
-      id,
-      bot: true,
-      role: 'driver',
-      name: BOT_NAMES[crypto.randomInt(BOT_NAMES.length)],
-      phone: '5' + String(crypto.randomInt(100000000, 999999999)),
-      driver: {
-        lat: center.lat + (r / 111) * Math.sin(ang),
-        lng: center.lng + (r / (111 * Math.cos((center.lat * Math.PI) / 180))) * Math.cos(ang),
-        heading: Math.round(Math.random() * 360),
-        online: true,
-        busy: false,
-        services: svc === 'oto' ? ['oto', 'moto'] : [svc],
-        plate: `34 ${'ABCDEFGHKLMNPRSTVYZ'[crypto.randomInt(19)]}${'ABCDEFGHKLMNPRSTVYZ'[crypto.randomInt(19)]} ${crypto.randomInt(100, 999)}`,
-        vehicle: BOT_VEHICLES[svc],
-        ratingSum: 46 + crypto.randomInt(4),
-        ratingCount: 10,
-      },
-    });
+// Demo çekiciler yalnızca yol üzerinde durur (deniz/bina içinde görünmesin) ve rota boyunca ilerler
+async function fetchJson(url, ms = 3500) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try { const r = await fetch(url, { signal: ctrl.signal }); return r.ok ? await r.json() : null; } catch { return null; } finally { clearTimeout(t); }
+}
+// Dönüş: {lat,lng} yola oturtuldu · null yola uzak (deniz vb.) · undefined servis yok
+async function snapToRoad(p) {
+  const j = await fetchJson(`https://router.project-osrm.org/nearest/v1/driving/${p.lng},${p.lat}?number=1`);
+  const w = j?.waypoints?.[0];
+  if (w) return w.distance < 200 ? { lat: w.location[1], lng: w.location[0] } : null;
+  if (process.env.MAPBOX_TOKEN) {
+    const q = await fetchJson(`https://api.mapbox.com/directions/v5/mapbox/driving/${p.lng},${p.lat};${(p.lng + 0.001).toFixed(6)},${p.lat}?overview=false&access_token=${encodeURIComponent(process.env.MAPBOX_TOKEN)}`);
+    const mw = q?.waypoints?.[0];
+    if (mw) return mw.distance < 200 ? { lat: mw.location[1], lng: mw.location[0] } : null;
   }
-  if (bots.size > 400) [...bots.keys()].slice(0, 100).forEach((k) => !bots.get(k).driver.busy && bots.delete(k));
+  return undefined;
+}
+// Yol boyunca güzergah: [[lat,lng], ...]
+async function roadPath(a, b) {
+  const coords = `${a.lng},${a.lat};${b.lng},${b.lat}`;
+  let j = await fetchJson(`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`);
+  if (!j?.routes?.[0] && process.env.MAPBOX_TOKEN) j = await fetchJson(`https://api.mapbox.com/directions/v5/mapbox/driving/${coords}?overview=full&geometries=geojson&access_token=${encodeURIComponent(process.env.MAPBOX_TOKEN)}`);
+  const g = j?.routes?.[0]?.geometry?.coordinates;
+  return g && g.length > 1 ? g.map(([x, y]) => [y, x]) : [[a.lat, a.lng], [b.lat, b.lng]];
+}
+const BOT_TARGET = 4; // bir bölgede en fazla bu kadar demo çekici
+const spawning = new Set();
+function makeBot(pos, svc) {
+  const id = 'bot_' + crypto.randomBytes(4).toString('hex');
+  return {
+    id, bot: true, role: 'driver',
+    name: BOT_NAMES[crypto.randomInt(BOT_NAMES.length)],
+    phone: '5' + String(crypto.randomInt(100000000, 999999999)),
+    driver: {
+      lat: pos.lat, lng: pos.lng, heading: Math.round(Math.random() * 360), online: true, busy: false,
+      services: svc === 'oto' ? ['oto', 'moto'] : [svc],
+      plate: `34 ${'ABCDEFGHKLMNPRSTVYZ'[crypto.randomInt(19)]}${'ABCDEFGHKLMNPRSTVYZ'[crypto.randomInt(19)]} ${crypto.randomInt(100, 999)}`,
+      vehicle: BOT_VEHICLES[svc], ratingSum: 46 + crypto.randomInt(4), ratingCount: 10,
+    },
+  };
+}
+const offsetPoint = (c, km, ang) => ({ lat: c.lat + (km / 111) * Math.sin(ang), lng: c.lng + (km / (111 * Math.cos((c.lat * Math.PI) / 180))) * Math.cos(ang) });
+async function ensureBots(center, service) {
+  if (!DEMO_MODE || !isPoint(center)) return;
+  const key = center.lat.toFixed(2) + ',' + center.lng.toFixed(2);
+  if (spawning.has(key)) return;
+  const near = [...bots.values()].filter((b) => P.haversineKm(b.driver, center) < 5);
+  const needSvc = service && !near.some((b) => !b.driver.busy && b.driver.services.includes(service));
+  let want = Math.max(0, BOT_TARGET - near.length);
+  if (!want && !needSvc) return;
+  if (!want) want = 1;
+  spawning.add(key);
+  try {
+    const mix = ['oto', 'agir', 'oto', 'yol'];
+    for (let i = 0; i < want; i++) {
+      const svc = needSvc && i === 0 ? service : mix[(near.length + i) % mix.length];
+      let pos = null;
+      let offline = false;
+      for (let k = 0; k < 5 && !pos; k++) {
+        const snapped = await snapToRoad(offsetPoint(center, 0.5 + Math.random() * 2.5, Math.random() * Math.PI * 2));
+        if (snapped === undefined) { offline = true; break; }
+        pos = snapped;
+      }
+      // Rota servisine ulaşılamazsa müşterinin çok yakınında (karada) beklet
+      if (!pos && offline) pos = offsetPoint(center, 0.15 + Math.random() * 0.3, Math.random() * Math.PI * 2);
+      if (!pos) continue;
+      const bot = makeBot(pos, svc);
+      bots.set(bot.id, bot);
+    }
+  } finally {
+    spawning.delete(key);
+  }
+  if (bots.size > 300) [...bots.keys()].slice(0, 100).forEach((k) => !bots.get(k).driver.busy && bots.delete(k));
 }
 
-function moveBotTo(bot, job, target, onArrive) {
-  const startKm = P.haversineKm(bot.driver, target);
-  const steps = Math.min(45, Math.max(12, Math.round(startKm * 6)));
-  const dLat = (target.lat - bot.driver.lat) / steps;
-  const dLng = (target.lng - bot.driver.lng) / steps;
-  let i = 0;
+async function moveBotTo(bot, job, target, onArrive) {
+  const path = await roadPath(bot.driver, target);
+  // Güzergahı eşit aralıklı adımlara böl
+  const seg = [0];
+  for (let i = 1; i < path.length; i++) seg.push(seg[i - 1] + P.haversineKm({ lat: path[i - 1][0], lng: path[i - 1][1] }, { lat: path[i][0], lng: path[i][1] }));
+  const total = seg[seg.length - 1] || 0.001;
+  const steps = Math.min(45, Math.max(12, Math.round(total * 5)));
+  const at = (f) => {
+    const d = f * total;
+    let i = seg.findIndex((x) => x >= d);
+    if (i <= 0) return path[0];
+    const r = (d - seg[i - 1]) / (seg[i] - seg[i - 1] || 1);
+    return [path[i - 1][0] + (path[i][0] - path[i - 1][0]) * r, path[i - 1][1] + (path[i][1] - path[i - 1][1]) * r];
+  };
+  let n = 0;
   const t = setInterval(() => {
     const j = db().jobs.find((x) => x.id === job.id);
     if (!j || ['cancelled', 'completed', 'expired'].includes(j.status) || j.driverId !== bot.id) {
@@ -318,12 +395,13 @@ function moveBotTo(bot, job, target, onArrive) {
       bot.driver.busy = false;
       return;
     }
-    i++;
-    bot.driver.lat += dLat + (Math.random() - 0.5) * 0.00008;
-    bot.driver.lng += dLng + (Math.random() - 0.5) * 0.00008;
-    bot.driver.heading = (Math.atan2(dLng, dLat) * 180) / Math.PI;
+    n++;
+    const [la, ln] = at(Math.min(1, n / steps));
+    bot.driver.heading = (Math.atan2(ln - bot.driver.lng, la - bot.driver.lat) * 180) / Math.PI;
+    bot.driver.lat = la;
+    bot.driver.lng = ln;
     emitDriverLoc(j, bot);
-    if (i >= steps) {
+    if (n >= steps) {
       clearInterval(t);
       bot.driver.lat = target.lat;
       bot.driver.lng = target.lng;
@@ -333,14 +411,18 @@ function moveBotTo(bot, job, target, onArrive) {
   }, 1200);
 }
 
-function runBot(job) {
+async function runBot(job) {
   const j = db().jobs.find((x) => x.id === job.id);
   if (!j || j.status !== 'searching') return;
-  ensureBots(j.pickup, j.service);
-  const candidates = [...bots.values()].filter((b) => !b.driver.busy && b.driver.services.includes(j.service));
+  await ensureBots(j.pickup, j.service);
+  if (j.status !== 'searching') return;
+  const candidates = [...bots.values()].filter((b) => !b.driver.busy && b.driver.services.includes(j.service) && P.haversineKm(b.driver, j.pickup) < 15);
   candidates.sort((a, b) => P.haversineKm(a.driver, j.pickup) - P.haversineKm(b.driver, j.pickup));
-  const bot = candidates[0];
-  if (!bot) return;
+  let bot = candidates[0];
+  if (!bot) {
+    bot = makeBot(offsetPoint(j.pickup, 0.4, Math.random() * Math.PI * 2), j.service);
+    bots.set(bot.id, bot);
+  }
   bot.driver.busy = true;
   assignDriver(j, bot);
   setTimeout(() => {
@@ -483,6 +565,25 @@ function completeJob(j) {
     }
   }
   notify(j.customerId, 'Kurtarma tamamlandı ✅', `Toplam ${fmtTL(j.price.total)}. Çekicinizi puanlamayı unutmayın.`, { jobId: j.id, type: 'rate' });
+  const dd = findDriver(j.driverId);
+  birdMail(c, {
+    subject: `Kurtarma fişiniz · ${j.no}`,
+    title: 'Kurtarmanız tamamlandı',
+    html: `<p>${P.SERVICES[j.service].name} hizmetiniz tamamlandı.</p>
+      <table role="presentation" width="100%" style="border-collapse:collapse;font-size:14px;margin:12px 0">
+      <tr><td style="color:#66767a;padding:4px 0">Talep no</td><td align="right"><b>${j.no}</b></td></tr>
+      <tr><td style="color:#66767a;padding:4px 0">Alış</td><td align="right">${(j.pickup.address || '').replace(/</g, '')}</td></tr>
+      ${j.dropoff ? `<tr><td style="color:#66767a;padding:4px 0">Varış</td><td align="right">${(j.dropoff.address || '').replace(/</g, '')}</td></tr>` : ''}
+      ${dd ? `<tr><td style="color:#66767a;padding:4px 0">Çekici</td><td align="right">${dd.name} · ${dd.driver.plate}</td></tr>` : ''}
+      ${j.price.lines.map((l) => `<tr><td style="padding:4px 0">${l.label}</td><td align="right">${fmtTL(l.amount)}</td></tr>`).join('')}
+      ${j.price.discount ? `<tr><td style="padding:4px 0;color:#c2410c">İndirim</td><td align="right" style="color:#c2410c">−${fmtTL(j.price.discount)}</td></tr>` : ''}
+      ${j.price.credit ? `<tr><td style="padding:4px 0;color:#c2410c">Kurtarma çeki</td><td align="right" style="color:#c2410c">−${fmtTL(j.price.credit)}</td></tr>` : ''}
+      <tr><td style="padding:10px 0;border-top:1px dashed #ddd"><b>Toplam</b></td><td align="right" style="border-top:1px dashed #ddd"><b>${fmtTL(j.price.total)}</b></td></tr></table>
+      <p style="color:#66767a;font-size:13px">Ödeme yöntemi: ${j.payment === 'card' ? 'Kredi kartı (POS)' : 'Nakit'}${j.kasko ? ' · Kasko güvenceli taşıma' : ''}</p>`,
+    cta: { label: 'Çekicinizi puanlayın', url: (process.env.APP_URL || 'https://yolda-kaldik.onrender.com') + '/' },
+    idem: 'receipt/' + j.id,
+    tag: 'receipt',
+  });
   broadcastJob(j);
 }
 function releaseCode(j) {
@@ -495,6 +596,16 @@ function releaseCode(j) {
   }
 }
 const fmtDate = (s) => new Date(s).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul', day: 'numeric', month: 'long', weekday: 'short', hour: '2-digit', minute: '2-digit' });
+const validEmail = (e) => /^[^\s@]{1,64}@[^\s@]+\.[a-z]{2,}$/i.test(String(e || '').trim());
+// Bird'e kişi senkronu (arka planda, uygulamayı bekletmez)
+function birdSync(u) {
+  if (!bird.configured() || !u?.email) return;
+  bird.syncUser(u).then(() => store.save()).catch((e) => console.warn('Bird senkron:', e.message));
+}
+function birdMail(u, opts) {
+  if (!bird.configured() || !u?.email) return;
+  bird.sendEmail({ to: { email: u.email, name: u.name }, ...opts }).catch((e) => console.warn('Bird e-posta:', e.message));
+}
 const fmtTL = (n) => new Intl.NumberFormat('tr-TR').format(Math.round(n)) + ' TL';
 
 // ---------- HTTP ----------
@@ -560,7 +671,8 @@ setInterval(() => { const n = Date.now(); for (const [k, o] of otps) if (o.exp <
 
 // --- Hesaplar ---
 app.post('/api/auth/register', wrap((req, res) => {
-  const { role = 'customer', name, phone, password, referral, driver, otp } = req.body || {};
+  const { role = 'customer', name, phone, password, referral, driver, otp, email, marketingConsent } = req.body || {};
+  if (email && !validEmail(email)) throw new Error('Geçerli bir e-posta adresi girin');
   if (!['customer', 'driver'].includes(role)) throw new Error('Geçersiz hesap türü');
   if (!name || String(name).trim().length < 2) throw new Error('Ad soyad girin');
   if (normPhone(phone).length !== 10) throw new Error('Geçerli bir cep telefonu girin (5xx xxx xx xx)');
@@ -595,6 +707,8 @@ app.post('/api/auth/register', wrap((req, res) => {
   checkOtp('register', role, normPhone(phone), otp);
   const u = newUser({ role, name, phone, password, driver: driverData });
   u.phoneVerified = true;
+  if (email) u.email = String(email).trim().toLowerCase();
+  u.marketingConsent = { email: !!(email && marketingConsent), at: new Date().toISOString(), source: 'kayıt' };
   if (referral && role === 'customer') {
     const inviter = db().users.find((x) => x.referralCode === String(referral).trim().toUpperCase());
     if (!inviter) throw new Error('Davet kodu bulunamadı');
@@ -603,6 +717,17 @@ app.post('/api/auth/register', wrap((req, res) => {
   }
   db().users.push(u);
   store.save();
+  birdSync(u);
+  birdMail(u, {
+    subject: role === 'driver' ? 'Yolda Kaldık çekici hesabınız açıldı' : 'Yolda Kaldık\'a hoş geldiniz',
+    title: `Hoş geldiniz, ${u.name.split(' ')[0]}!`,
+    html: role === 'driver'
+      ? '<p>Çekici hesabınız oluşturuldu. İş almaya başlamak için çekici panelinden <b>ruhsat, K belgesi, sigorta ve ehliyet</b> fotoğraflarınızı yükleyin ve aylık paketinizi etkinleştirin.</p>'
+      : `<p>Yolda kaldığınızda en yakın çekici dakikalar içinde yanınızda. Canlı takip, şeffaf fiyat ve 7/24 destek.</p>${u.credits ? `<p><b>${fmtTL(u.credits)} davet çekiniz</b> hesabınıza tanımlandı.</p>` : ''}<p>İlk kurtarmanızda <b>ILK30</b> koduyla %30 indirim kazanın.</p>`,
+    cta: { label: role === 'driver' ? 'Çekici paneline git' : 'Uygulamayı aç', url: bird.status().from && (process.env.APP_URL || 'https://yolda-kaldik.onrender.com') + (role === 'driver' ? '/cekici' : '/') },
+    idem: 'welcome/' + u.id,
+    tag: 'welcome',
+  });
   setTimeout(() => {
     if (role === 'driver') notify(u.id, 'Hoş geldiniz 👋', 'İş almak için belgelerinizi yükleyin ve aylık paketinizi etkinleştirin.', { url: '/cekici' });
     else notify(u.id, 'Yolda Kaldık\'a hoş geldiniz', u.credits ? '250 TL davet çekiniz hesabınızda. İlk kurtarmada ILK30 kodu ile %30 indirim!' : 'İlk kurtarmanızda ILK30 kodu ile %30 indirim kazanın.');
@@ -656,6 +781,17 @@ app.patch('/api/me', auth(), wrap((req, res) => {
       if (s.length) u.driver.services = s;
     }
   }
+  if (b.email !== undefined) {
+    const e = String(b.email || '').trim().toLowerCase();
+    if (e && !validEmail(e)) throw new Error('Geçerli bir e-posta adresi girin');
+    u.email = e || null;
+    if (!e) u.marketingConsent = { email: false, at: new Date().toISOString(), source: 'profil' };
+  }
+  if (b.marketingConsent !== undefined) {
+    if (b.marketingConsent && !u.email) throw new Error('Önce e-posta adresinizi girin');
+    u.marketingConsent = { email: !!b.marketingConsent, at: new Date().toISOString(), source: 'profil' };
+  }
+  if (b.email !== undefined || b.marketingConsent !== undefined) birdSync(u);
   if (b.password) {
     if (String(b.password).length < 6) throw new Error('Şifre en az 6 karakter olmalı');
     u.passHash = bcrypt.hashSync(String(b.password), 10);
@@ -676,14 +812,24 @@ app.post('/api/push/subscribe', auth(), wrap((req, res) => {
   if (!sub || !sub.endpoint || !sub.keys) throw new Error('Geçersiz abonelik');
   const u = req.user;
   u.pushSubs = (u.pushSubs || []).filter((s) => s.endpoint !== sub.endpoint);
-  u.pushSubs.push({ endpoint: sub.endpoint, keys: sub.keys });
+  u.pushSubs.push({ endpoint: sub.endpoint, keys: sub.keys, ua: String(sub.ua || '').slice(0, 120), at: new Date().toISOString() });
   u.pushSubs = u.pushSubs.slice(-5);
+  store.save();
+  res.json({ ok: true });
+}));
+app.post('/api/push/expo', auth(), wrap((req, res) => {
+  const token = String(req.body?.token || '');
+  if (!/^Expo(nent)?PushToken\[.+\]$/.test(token)) throw new Error('Geçersiz cihaz anahtarı');
+  // Aynı cihaz başka hesapta kayıtlıysa oradan kaldır (cihazda tek oturum)
+  db().users.forEach((x) => { if (x.expoTokens?.some((t) => t.token === token)) x.expoTokens = x.expoTokens.filter((t) => t.token !== token); });
+  const u = req.user;
+  u.expoTokens = [...(u.expoTokens || []), { token, platform: String(req.body?.platform || '').slice(0, 10), at: new Date().toISOString() }].slice(-5);
   store.save();
   res.json({ ok: true });
 }));
 app.post('/api/push/test', auth(), (req, res) => {
   notify(req.user.id, 'Bildirimler açık 🔔', 'Kurtarma durumunuzu buradan anlık takip edeceksiniz.');
-  res.json({ ok: true });
+  res.json({ ok: true, devices: (req.user.pushSubs || []).length + (req.user.expoTokens || []).length });
 });
 
 app.get('/api/notifications', auth(), (req, res) => {
@@ -697,17 +843,17 @@ app.post('/api/notifications/read', auth(), (req, res) => {
 });
 
 // --- Harita: yakındaki çekiciler ---
-app.get('/api/nearby', (req, res) => {
+app.get('/api/nearby', async (req, res) => {
   const c = { lat: Number(req.query.lat), lng: Number(req.query.lng) };
   if (!isPoint(c)) return res.json({ drivers: [] });
   const service = P.SERVICES[req.query.service] ? req.query.service : null;
-  ensureBots(c, service);
+  await Promise.race([ensureBots(c, service).catch(() => {}), new Promise((r) => setTimeout(r, 2500))]);
   const real = db().users.filter((u) => u.role === 'driver' && u.driver?.online && subActive(u) && u.driver.lat != null);
   const all = [...real, ...bots.values()]
-    .filter((d) => !d.driver.busy && (!service || d.driver.services.includes(service)) && P.haversineKm(d.driver, c) < 15)
+    .filter((d) => !d.driver.busy && (!service || d.driver.services.includes(service)) && P.haversineKm(d.driver, c) < 8)
     .map((d) => ({ id: d.id, lat: d.driver.lat, lng: d.driver.lng, heading: d.driver.heading || 0, services: d.driver.services, eta: etaMin(d.driver, c) }))
     .sort((a, b) => a.eta - b.eta)
-    .slice(0, 25);
+    .slice(0, 8);
   res.json({ drivers: all, nearestEta: all[0]?.eta || null });
 });
 
@@ -952,6 +1098,15 @@ app.post('/api/driver/subscription', auth('driver'), wrap((req, res) => {
   db().payments.push(pay);
   store.save();
   notify(u.id, 'Paketiniz aktif ✅', `Aylık çekici paketiniz ${until.toLocaleDateString('tr-TR', { timeZone: 'Europe/Istanbul' })} tarihine kadar geçerli.`, { url: '/cekici' });
+  birdMail(u, {
+    subject: `Paket ödemeniz alındı · ${pay.no}`,
+    title: 'Aylık çekici paketiniz aktif',
+    html: `<p>Paketiniz <b>${until.toLocaleDateString('tr-TR', { timeZone: 'Europe/Istanbul' })}</b> tarihine kadar geçerli.</p>
+      <p>Ödeme no: <b>${pay.no}</b><br>Tutar: ${fmtTL(pay.amount)}${pay.discount ? `<br>İndirim (${pay.code}): −${fmtTL(pay.discount)}` : ''}<br><b>Ödenen: ${fmtTL(pay.total)}</b>${pay.last4 ? `<br>Kart: •••• ${pay.last4}` : ''}</p>`,
+    cta: { label: 'Çekici paneline git', url: (process.env.APP_URL || 'https://yolda-kaldik.onrender.com') + '/cekici' },
+    idem: 'invoice/' + pay.id,
+    tag: 'invoice',
+  });
   res.json({ user: publicUser(u), payment: pay });
 }));
 app.post('/api/driver/subscription/auto-renew', auth('driver'), wrap((req, res) => {
@@ -1186,6 +1341,35 @@ app.get('/api/admin/stats', admin, (req, res) => {
     demo: DEMO_MODE,
   });
 });
+app.get('/api/admin/bird', admin, (req, res) => {
+  const us = db().users.filter((u) => u.role !== 'admin');
+  const withEmail = us.filter((u) => u.email);
+  res.json({
+    ...bird.status(),
+    counts: {
+      withEmail: withEmail.length,
+      consentCustomers: withEmail.filter((u) => u.role === 'customer' && u.marketingConsent?.email).length,
+      consentDrivers: withEmail.filter((u) => u.role === 'driver' && u.marketingConsent?.email).length,
+      synced: withEmail.filter((u) => u.birdContactId).length,
+    },
+  });
+});
+app.post('/api/admin/bird/sync', admin, wrap(async (req, res) => {
+  if (!bird.configured()) throw new Error('BIRD_API_KEY tanımlı değil');
+  let ok = 0, failed = 0, lastError = null;
+  for (const u of db().users.filter((x) => x.email && x.role !== 'admin')) {
+    try { await bird.syncUser(u); ok++; } catch (e) { failed++; lastError = e.message; }
+  }
+  store.save();
+  res.json({ ok, failed, lastError });
+}));
+app.post('/api/admin/bird/test', admin, wrap(async (req, res) => {
+  if (!bird.configured()) throw new Error('BIRD_API_KEY tanımlı değil');
+  const to = String(req.body?.to || '').trim();
+  if (!validEmail(to)) throw new Error('Geçerli bir e-posta adresi girin');
+  const r = await bird.sendEmail({ to, subject: 'Yolda Kaldık · test e-postası', title: 'Bird bağlantısı çalışıyor ✅', html: '<p>Bu e-posta Yolda Kaldık yönetim panelinden Bird üzerinden gönderildi.</p>', tag: 'test' });
+  res.json({ id: r?.id, status: r?.status });
+}));
 app.get('/api/admin/approvals', admin, (req, res) => {
   const list = db().users.filter((u) => u.role === 'driver' && Object.values(u.driver.docs || {}).some((d) => d.status === 'pending')).map(publicUser);
   res.json({ drivers: list, docTypes: DOC_TYPES });

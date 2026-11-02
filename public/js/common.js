@@ -129,6 +129,7 @@
       try { return (await navigator.permissions.query({ name: 'geolocation' })).state; } catch { return 'prompt'; }
     },
     notification() {
+      if (window.ReactNativeWebView) { try { return localStorage.getItem(KEY + ':nativePush') || 'prompt'; } catch { return 'prompt'; } }
       if (!('Notification' in window)) return 'unsupported';
       return Notification.permission === 'default' ? 'prompt' : Notification.permission === 'granted' ? 'granted' : 'denied';
     },
@@ -160,23 +161,96 @@
     const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
     return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
   }
-  async function enablePush(vapidKey) {
-    if (!('Notification' in window)) throw new Error('Bu tarayıcı bildirim desteklemiyor. iPhone\'da önce "Ana Ekrana Ekle" yapın.');
-    const p = await Notification.requestPermission();
-    if (p !== 'granted') throw new Error('Bildirim izni verilmedi');
-    const reg = swReg || (await registerSW());
-    if (reg && 'PushManager' in window && vapidKey && auth.token) {
-      const ready = await navigator.serviceWorker.ready;
-      let sub = await ready.pushManager.getSubscription();
-      if (!sub) sub = await ready.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToUint8(vapidKey) });
-      await api('/push/subscribe', { body: sub.toJSON() });
+  // ---------- Platform ----------
+  const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isAndroid = () => /Android/i.test(navigator.userAgent);
+  const isStandalone = () => !!window.ReactNativeWebView || window.navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+  const pushSupported = () => 'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window;
+  let installEvt = null;
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; });
+
+  // Ana ekrana ekleme rehberi (iPhone'da bildirimler yalnızca ana ekrandan açılan uygulamada çalışır)
+  function installHelp(reason = '') {
+    const ios = isIOS();
+    const m = modal(`
+      <div class="center"><img src="/icons/logo-192.png" alt="" style="width:72px;height:72px;border-radius:18px"></div>
+      <h3 class="center" style="margin-top:10px">Uygulamayı ana ekrana ekleyin</h3>
+      ${reason ? `<p class="muted small center" style="margin-top:-6px">${h(reason)}</p>` : ''}
+      ${ios ? `<ol class="steps-list">
+          <li>Bu sayfayı <b>Safari</b> ile açın (Chrome değil)</li>
+          <li>Alttaki <b>Paylaş</b> düğmesine dokunun <span class="kbd">⬆︎</span></li>
+          <li><b>Ana Ekrana Ekle</b>'yi seçin ve <b>Ekle</b>'ye dokunun</li>
+          <li>Ana ekrandaki <b>Yolda Kaldık</b> ikonundan açın ve <b>Ayarlar → Bildirim izni</b>'ne dokunun</li></ol>
+          <p class="tiny muted">iOS 16.4 ve üstü gerekir. Ayarlar → Genel → Hakkında'dan sürümünüzü görebilirsiniz.</p>`
+        : `<ol class="steps-list"><li>Chrome menüsüne (⋮) dokunun</li><li><b>Uygulamayı yükle</b> veya <b>Ana ekrana ekle</b>'yi seçin</li><li>Ana ekrandaki ikondan açın</li></ol>`}
+      ${installEvt ? '<button class="btn" id="doInstall">Şimdi yükle</button>' : ''}
+      <button class="btn ghost" data-close style="margin-top:8px">Tamam</button>`);
+    const b = $('#doInstall', m.el);
+    if (b) b.onclick = async () => { installEvt.prompt(); await installEvt.userChoice.catch(() => {}); installEvt = null; m.close(); };
+  }
+
+  const LSK = (k) => KEY + ':' + k;
+  const sameKey = (buf, b64) => {
+    if (!buf) return true;
+    const a = new Uint8Array(buf);
+    const b = b64ToUint8(b64);
+    return a.length === b.length && a.every((x, i) => x === b[i]);
+  };
+  // Expo iOS/Android uygulaması içinde çalışıyorsak yerel bildirim köprüsü
+  const NATIVE = !!window.ReactNativeWebView;
+  const nativeWait = {};
+  window.__ykNative = (msg) => {
+    if (!msg) return;
+    if (msg.type === 'push:token' && nativeWait.push) { nativeWait.push.res(msg); delete nativeWait.push; }
+    if (msg.type === 'push:error' && nativeWait.push) { nativeWait.push.rej(new Error(msg.message || 'Bildirim izni verilmedi')); delete nativeWait.push; }
+  };
+  const nativePost = (m) => { try { window.ReactNativeWebView.postMessage(JSON.stringify(m)); } catch {} };
+  function nativePushToken(prompt) {
+    return new Promise((res, rej) => {
+      nativeWait.push = { res, rej };
+      nativePost({ type: 'push:register', prompt });
+      setTimeout(() => { if (nativeWait.push) { delete nativeWait.push; rej(new Error('Bildirim izni alınamadı')); } }, 20000);
+    });
+  }
+  async function enablePush(vapidKey, { silent = false } = {}) {
+    if (NATIVE) {
+      const r = await nativePushToken(!silent);
+      if (r.token && auth.token) await api('/push/expo', { body: { token: r.token, platform: r.platform } });
+      try { localStorage.setItem(LSK('pushOk'), '1'); localStorage.setItem(LSK('nativePush'), 'granted'); } catch {}
+      return true;
     }
+    if (!pushSupported()) {
+      if (isIOS() && !isStandalone()) {
+        if (!silent) installHelp('iPhone\'da bildirimler yalnızca ana ekrana eklenen uygulamada çalışır.');
+        throw new Error('iPhone\'da bildirim için uygulamayı ana ekrana ekleyin');
+      }
+      throw new Error('Bu tarayıcı bildirimleri desteklemiyor. Chrome veya Safari\'nin güncel sürümünü kullanın.');
+    }
+    const p = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
+    if (p !== 'granted') throw new Error(p === 'denied' ? 'Bildirimler engellendi. Telefon/tarayıcı ayarlarından bu site için bildirimlere izin verin.' : 'Bildirim izni verilmedi');
+    await (swReg || registerSW());
+    if (!vapidKey || !auth.token) return true;
+    const ready = await navigator.serviceWorker.ready;
+    let sub = await ready.pushManager.getSubscription();
+    // Sunucu anahtarı değiştiyse eski abonelik çalışmaz: yenile
+    let stored = null;
+    try { stored = localStorage.getItem(LSK('vapid')); } catch {}
+    if (sub && (stored !== vapidKey || !sameKey(sub.options?.applicationServerKey, vapidKey))) {
+      await sub.unsubscribe().catch(() => {});
+      sub = null;
+    }
+    if (!sub) sub = await ready.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToUint8(vapidKey) });
+    await api('/push/subscribe', { body: { ...sub.toJSON(), ua: navigator.userAgent.slice(0, 120) } });
+    try { localStorage.setItem(LSK('vapid'), vapidKey); localStorage.setItem(LSK('pushOk'), '1'); } catch {}
     return true;
   }
   async function showLocalNotification(title, body, data = {}) {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
-    if (document.visibilityState === 'visible') return; // uygulama açıkken toast yeterli
-    try { const reg = await navigator.serviceWorker.ready; reg.showNotification(title, { body, icon: '/icons/icon-192.png', badge: '/icons/badge.png', data, vibrate: [200, 100, 200] }); } catch {}
+    if (document.visibilityState === 'visible') return; // uygulama açıkken uygulama içi uyarı yeterli
+    let pushOk = false;
+    try { pushOk = localStorage.getItem(LSK('pushOk')) === '1'; } catch {}
+    if (pushOk) return; // sunucu zaten anlık bildirim gönderiyor; çift bildirim olmasın
+    try { const reg = await navigator.serviceWorker.ready; reg.showNotification(title, { body, icon: '/icons/icon-192.png', badge: '/icons/badge.png', data, tag: data.jobId ? 'job-' + data.jobId : undefined }); } catch {}
   }
 
   // ---------- Socket ----------
@@ -644,5 +718,5 @@
   // Hizmet görselleri (müşteri tasarımındaki araç çizimleri)
   const svcImg = (k, cls = '') => `<img class="svc-img ${cls}" src="/img/svc-${k}.png" alt="" draggable="false">`;
 
-  window.YK = { $, $$, h, I, svcImg, api, auth, tl, dt, d8, phoneFmt, initials, STATUS, statusBadge, toast, fail, modal, confirmBox, perms, getPosition, registerSW, enablePush, showLocalNotification, connectSocket, createMap, initMaps, initGoogle, gmapsReady, toggleMapType, mapTypeButton, truckIcon, pinIcon, meIcon, route, geocode, resolvePlace, reverseGeocode, alertSound, applyTheme, pickImages, compressImage, uploadImage, viewPhoto, photoStrip, bindPhotoStrips, otpModal, forgotPassword, openChat };
+  window.YK = { isIOS, isAndroid, isStandalone, pushSupported, installHelp, $, $$, h, I, svcImg, api, auth, tl, dt, d8, phoneFmt, initials, STATUS, statusBadge, toast, fail, modal, confirmBox, perms, getPosition, registerSW, enablePush, showLocalNotification, connectSocket, createMap, initMaps, initGoogle, gmapsReady, toggleMapType, mapTypeButton, truckIcon, pinIcon, meIcon, route, geocode, resolvePlace, reverseGeocode, alertSound, applyTheme, pickImages, compressImage, uploadImage, viewPhoto, photoStrip, bindPhotoStrips, otpModal, forgotPassword, openChat };
 })();
