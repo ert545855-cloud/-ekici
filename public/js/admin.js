@@ -16,7 +16,7 @@
 
   function renderLogin() {
     app.innerHTML = `<div class="screen full"><div class="page stack" style="max-width:420px;padding-top:12vh">
-      <div class="brand" style="display:inline-flex"><span class="logo">${I.tow}</span>YÖNETİM PANELİ</div>
+      <div class="brand" style="display:inline-flex"><span class="logo"><img src="/icons/logo-64.png" alt=""></span>YÖNETİM PANELİ</div>
       <h1>Yönetici girişi</h1>
       <form id="f" class="stack">
         <label class="field"><span>Telefon</span><input name="phone" required inputmode="tel"></label>
@@ -37,7 +37,7 @@
   const TABS = [['dash', 'Özet'], ['approvals', 'Belge onayı'], ['codes', 'İndirim kodları'], ['drivers', 'Çekiciler'], ['customers', 'Müşteriler'], ['jobs', 'Talepler'], ['payments', 'Ödemeler'], ['push', 'Bildirim gönder']];
   function renderMain() {
     app.innerHTML = `<div class="screen full"><div class="page" style="max-width:1180px">
-      <div class="row between" style="flex-wrap:wrap;gap:10px"><div class="brand" style="display:inline-flex"><span class="logo">${I.tow}</span>YOLDA KALDIK · YÖNETİM</div>
+      <div class="row between" style="flex-wrap:wrap;gap:10px"><div class="brand" style="display:inline-flex"><span class="logo"><img src="/icons/logo-64.png" alt=""></span>YOLDA KALDIK · YÖNETİM</div>
       <div class="row"><a class="btn sm ghost" href="/" target="_blank">Müşteri uygulaması</a><a class="btn sm ghost" href="/cekici" target="_blank">Çekici paneli</a><button class="btn sm ghost" id="lo">${I.logout}</button></div></div>
       <div class="chips" style="margin:14px 0 10px;padding-left:0">${TABS.map(([k, n]) => `<button class="chip ${S.tab === k ? 'on' : ''}" data-t="${k}">${n}</button>`).join('')}</div>
       <div id="content"></div></div></div>`;

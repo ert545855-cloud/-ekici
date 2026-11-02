@@ -1,5 +1,5 @@
 // Yolda Kaldık service worker — push bildirimleri ve çevrimdışı kabuk
-const CACHE = 'yk-v1';
+const CACHE = 'yk-v2';
 const SHELL = ['/css/app.css', '/js/common.js', '/icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {

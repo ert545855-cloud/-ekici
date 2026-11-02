@@ -24,7 +24,7 @@
     app.innerHTML = `
       <div class="screen full">
         <div class="hero">
-          <div class="brand" style="display:inline-flex"><span class="logo">${I.tow}</span>YOLDA KALDIK · ÇEKİCİ</div>
+          <div class="brand" style="display:inline-flex"><span class="logo"><img src="/icons/logo-64.png" alt=""></span>YOLDA KALDIK · ÇEKİCİ</div>
           <h1>Komisyon yok,<br><span>sınırsız iş</span> var.</h1>
           <p>Aylık ${tl(S.cfg.subscriptionPrice)} sabit paket ile bölgenizdeki tüm kurtarma taleplerini anında alın.</p>
           <svg class="road" viewBox="0 0 48 48" fill="none" stroke="#fff" stroke-width="1.5">${I.svc_agir.replace(/<\/?svg[^>]*>/g, '')}</svg>
@@ -108,7 +108,7 @@
       <div class="perm ${state === 'granted' ? 'ok' : ''}"><div class="pi">${icon}</div><div class="pb"><b>${title}</b><span>${text}</span></div>
       ${state === 'granted' ? '<span class="badge green">Açık</span>' : state === 'denied' ? '<span class="badge red">Kapalı</span>' : state === 'unsupported' ? '<span class="badge">Yok</span>' : `<button class="btn sm" data-ask="${k}">İzin ver</button>`}</div>`;
     app.innerHTML = `<div class="screen full"><div class="page stack">
-      <div class="brand" style="display:inline-flex;margin-top:8px"><span class="logo">${I.tow}</span>ÇEKİCİ PANELİ</div>
+      <div class="brand" style="display:inline-flex;margin-top:8px"><span class="logo"><img src="/icons/logo-64.png" alt=""></span>ÇEKİCİ PANELİ</div>
       <h1 style="margin-top:20px">İş alabilmeniz için gerekli izinler</h1>
       ${card('loc', I.pin, 'Konum (zorunlu)', 'Size en yakın talepleri iletmek ve müşterinin sizi canlı izlemesi için', loc)}
       ${card('noti', I.bell, 'Bildirimler', 'Uygulama kapalıyken bile yeni iş geldiğinde sesli uyarı', noti)}

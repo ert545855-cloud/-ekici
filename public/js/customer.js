@@ -46,7 +46,7 @@
     app.innerHTML = `
       <div class="screen full">
         <div class="hero">
-          <div class="brand" style="display:inline-flex"><span class="logo">${I.tow}</span>YOLDA KALDIK</div>
+          <div class="brand" style="display:inline-flex"><span class="logo"><img src="/icons/logo-64.png" alt=""></span>YOLDA KALDIK</div>
           <h1>Yolda mı kaldınız?<br><span>Çekiciniz dakikalar içinde</span> yanınızda.</h1>
           <p>Canlı takip, şeffaf fiyat, 7/24 kurtarma.</p>
           <svg class="road" viewBox="0 0 48 48" fill="none" stroke="#fff" stroke-width="1.5">${I.svc_oto.replace(/<\/?svg[^>]*>/g, '')}</svg>
@@ -117,7 +117,7 @@
       </div>`;
     app.innerHTML = `
       <div class="screen full"><div class="page stack">
-        <div class="brand" style="display:inline-flex;margin-top:8px"><span class="logo">${I.tow}</span>YOLDA KALDIK</div>
+        <div class="brand" style="display:inline-flex;margin-top:8px"><span class="logo"><img src="/icons/logo-64.png" alt=""></span>YOLDA KALDIK</div>
         <h1 style="margin-top:20px">Size hızlı ulaşabilmemiz için birkaç izin</h1>
         <p class="muted" style="margin-top:-8px">İzinleri istediğiniz zaman Ayarlar'dan değiştirebilirsiniz.</p>
         ${card('loc', I.pin, 'Konum', 'Çekicinin sizi bulması ve en yakın aracı atamak için', loc)}
@@ -144,7 +144,7 @@
       <div class="screen full" id="homeScreen">
         <div id="map"></div>
         <div class="topbar">
-          <div class="brand"><span class="logo">${I.tow}</span>YOLDA KALDIK</div>
+          <div class="brand"><span class="logo"><img src="/icons/logo-64.png" alt=""></span>YOLDA KALDIK</div>
           <div class="grow"></div>
           <button class="icon-btn sos-btn" id="sosBtn" aria-label="Acil durum">${I.sos}</button>
           <button class="icon-btn" id="bellBtn" aria-label="Bildirimler">${I.bell}<span class="dot hidden" id="bellDot"></span></button>
