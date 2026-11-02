@@ -1,0 +1,67 @@
+{
+  "expo": {
+    "name": "Yolda Kaldık",
+    "slug": "yoldakaldimcom",
+    "scheme": "yoldakaldik",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "backgroundColor": "#0b2b33",
+    "ios": {
+      "bundleIdentifier": "com.yoldakaldim.app",
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Size en yakın çekiciyi bulmak ve çekicinin sizi bulabilmesi için konumunuz kullanılır.",
+        "NSCameraUsageDescription": "Belge ve hasar fotoğraflarını çekmek, sohbette fotoğraf göndermek için kamera kullanılır.",
+        "NSPhotoLibraryUsageDescription": "Belge ve hasar fotoğraflarını galeriden seçmek için fotoğraflarınıza erişilir.",
+        "ITSAppUsesNonExemptEncryption": false,
+        "LSApplicationQueriesSchemes": [
+          "tel",
+          "sms",
+          "comgooglemaps",
+          "maps"
+        ]
+      }
+    },
+    "android": {
+      "package": "com.yoldakaldim.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#F86806",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "CAMERA"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#EA580C",
+          "defaultChannel": "default",
+          "mode": "production"
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 160,
+          "resizeMode": "contain",
+          "backgroundColor": "#0b2b33"
+        }
+      ]
+    ],
+    "extra": {
+      "appUrl": "https://yolda-kaldik.onrender.com",
+      "eas": {
+        "projectId": "7a6ef0e1-decd-48f6-b617-304af15f3afb"
+      }
+    }
+  }
+}
