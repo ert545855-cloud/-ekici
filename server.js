@@ -231,6 +231,35 @@ function notify(userId, title, body, data = {}) {
   });
 }
 
+// Gerçek yol mesafesi: Mapbox Directions → OSRM → kuş uçuşu tahmini (null)
+const distCache = new Map();
+async function routeDistanceKm(a, b) {
+  if (!a || !b) return null;
+  const key = [a.lat, a.lng, b.lat, b.lng].map((x) => x.toFixed(4)).join(',');
+  if (distCache.has(key)) return distCache.get(key);
+  const get = async (url) => {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 4000);
+    try { const r = await fetch(url, { signal: ctrl.signal }); return r.ok ? await r.json() : null; } catch { return null; } finally { clearTimeout(t); }
+  };
+  const coords = `${a.lng},${a.lat};${b.lng},${b.lat}`;
+  let km = null;
+  if (process.env.MAPBOX_TOKEN) {
+    const j = await get(`https://api.mapbox.com/directions/v5/mapbox/driving/${coords}?overview=false&access_token=${encodeURIComponent(process.env.MAPBOX_TOKEN)}`);
+    if (j?.routes?.[0]) km = j.routes[0].distance / 1000;
+  }
+  if (km == null) {
+    const j = await get(`https://router.project-osrm.org/route/v1/driving/${coords}?overview=false`);
+    if (j?.routes?.[0]) km = j.routes[0].distance / 1000;
+  }
+  if (km != null) {
+    distCache.set(key, km);
+    if (distCache.size > 2000) distCache.delete(distCache.keys().next().value);
+  }
+  return km;
+}
+const driverShare = (j) => j.price.total - (j.price.kasko || 0);
+
 function notifyPushOnly(u, title, body, data = {}) {
   io.to('user:' + u.id).emit('chat:ping', { title, body, data });
   const payload = JSON.stringify({ title, body, data });
@@ -390,7 +419,7 @@ function dispatch(j) {
   drivers.forEach((d) => {
     const km = d.driver.lat != null ? Math.round(P.haversineKm(d.driver, j.pickup) * 10) / 10 : null;
     io.to('user:' + d.id).emit('job:offer', { ...pj, distanceToPickup: km });
-    notify(d.id, '🚨 Yeni kurtarma talebi', `${P.SERVICES[j.service].name} · ${km != null ? km + ' km uzakta · ' : ''}${fmtTL(j.price.total)}`, { jobId: j.id, type: 'offer', url: '/cekici' });
+    notify(d.id, '🚨 Yeni kurtarma talebi', `${P.SERVICES[j.service].name}${j.kasko ? ' · Kasko güvenceli' : ''} · ${km != null ? km + ' km uzakta · ' : ''}${fmtTL(j.price.total)}`, { jobId: j.id, type: 'offer', url: '/cekici' });
   });
   store.save();
   if (DEMO_MODE) {
@@ -443,7 +472,7 @@ function completeJob(j) {
   const c = db().users.find((u) => u.id === j.customerId);
   if (c && j.price.credit) c.credits = Math.max(0, (c.credits || 0) - j.price.credit);
   const d = findDriver(j.driverId);
-  if (d && !d.bot) d.driver.earnings = (d.driver.earnings || 0) + j.price.total;
+  if (d && !d.bot) d.driver.earnings = (d.driver.earnings || 0) + driverShare(j);
   // Davet ödülü: davet edilen kişinin ilk tamamlanan kurtarması
   if (c && c.referredBy && !c.referralRewarded) {
     const inviter = db().users.find((u) => u.id === c.referredBy);
@@ -491,7 +520,7 @@ app.use('/vendor/leaflet', express.static(path.join(__dirname, 'node_modules', '
 
 app.get('/health', (req, res) => res.json({ ok: true, demo: DEMO_MODE, persistent: store.persistent() }));
 app.get('/api/config', (req, res) =>
-  res.json({ services: P.SERVICES, roadside: P.ROADSIDE, subscriptionPrice: P.SUBSCRIPTION_PRICE, vapidPublicKey: db().meta.vapid.publicKey, demo: DEMO_MODE, googleMapsKey: process.env.GOOGLE_MAPS_API_KEY || '', mapboxToken: process.env.MAPBOX_TOKEN || '', smsLive: !!sms.configured(), docTypes: DOC_TYPES, minPhotos: MIN_PHOTOS, fleetMax: FLEET_MAX, support: process.env.SUPPORT_PHONE || '4440000' })
+  res.json({ services: P.SERVICES, roadside: P.ROADSIDE, subscriptionPrice: P.SUBSCRIPTION_PRICE, vapidPublicKey: db().meta.vapid.publicKey, demo: DEMO_MODE, googleMapsKey: process.env.GOOGLE_MAPS_API_KEY || '', mapboxToken: process.env.MAPBOX_TOKEN || '', smsLive: !!sms.configured(), docTypes: DOC_TYPES, kaskoPrice: P.KASKO_PRICE, minPhotos: MIN_PHOTOS, fleetMax: FLEET_MAX, support: process.env.SUPPORT_PHONE || '4440000' })
 );
 
 // --- SMS doğrulama kodları (bellekte, 5 dk geçerli) ---
@@ -683,9 +712,12 @@ app.get('/api/nearby', (req, res) => {
 });
 
 // --- Fiyat & talep ---
-app.post('/api/quote', auth('customer'), wrap((req, res) => {
+app.post('/api/quote', auth('customer'), wrap(async (req, res) => {
   const b = req.body || {};
-  res.json(P.quote(db(), { service: b.service, sub: b.sub, pickup: cleanPoint(b.pickup), dropoff: cleanPoint(b.dropoff), code: b.code, user: req.user, at: b.scheduledAt }));
+  const pickup = cleanPoint(b.pickup);
+  const dropoff = P.SERVICES[b.service]?.needsDropoff ? cleanPoint(b.dropoff) : null;
+  const distanceKm = dropoff ? await routeDistanceKm(pickup, dropoff) : null;
+  res.json(P.quote(db(), { service: b.service, sub: b.sub, pickup, dropoff, code: b.code, user: req.user, at: b.scheduledAt, kasko: !!b.kasko, distanceKm }));
 }));
 app.post('/api/codes/check', auth(), wrap((req, res) => {
   const target = req.body.target === 'subscription' ? 'subscription' : 'ride';
@@ -694,7 +726,7 @@ app.post('/api/codes/check', auth(), wrap((req, res) => {
   res.json({ code: v.code.code, label: v.code.label, type: v.code.type, value: v.code.value });
 }));
 
-app.post('/api/jobs', auth('customer'), wrap((req, res) => {
+app.post('/api/jobs', auth('customer'), wrap(async (req, res) => {
   const b = req.body || {};
   const u = req.user;
   let scheduledAt = null;
@@ -708,7 +740,8 @@ app.post('/api/jobs', auth('customer'), wrap((req, res) => {
   } else if (db().jobs.some((j) => j.customerId === u.id && ACTIVE.includes(j.status))) throw new Error('Devam eden bir talebiniz var');
   const pickup = cleanPoint(b.pickup);
   const dropoff = P.SERVICES[b.service]?.needsDropoff ? cleanPoint(b.dropoff) : null;
-  const q = P.quote(db(), { service: b.service, sub: b.sub, pickup, dropoff, code: b.code, user: u, at: scheduledAt });
+  const distanceKm = dropoff ? await routeDistanceKm(pickup, dropoff) : null;
+  const q = P.quote(db(), { service: b.service, sub: b.sub, pickup, dropoff, code: b.code, user: u, at: scheduledAt, kasko: !!b.kasko, distanceKm });
   if (b.code && q.codeError) throw new Error(q.codeError);
   if (q.code) {
     const c = db().codes.find((x) => x.code === q.code.code);
@@ -725,7 +758,8 @@ app.post('/api/jobs', auth('customer'), wrap((req, res) => {
     pickup,
     dropoff,
     distanceKm: q.distanceKm,
-    price: { lines: q.lines, subtotal: q.subtotal, discount: q.discount, credit: q.credit, total: q.total, code: q.code },
+    price: { lines: q.lines, subtotal: q.subtotal, discount: q.discount, credit: q.credit, kasko: q.kasko, total: q.total, code: q.code },
+    kasko: q.kasko > 0,
     payment: b.payment === 'card' ? 'card' : 'cash',
     vehicle: { plate: String(b.vehicle?.plate || '').toUpperCase().slice(0, 15), model: String(b.vehicle?.model || '').slice(0, 60) },
     note: String(b.note || '').slice(0, 300),
@@ -932,7 +966,7 @@ app.get('/api/driver/stats', auth('driver'), (req, res) => {
   const today = new Date().toDateString();
   const t = mine.filter((j) => new Date(j.completedAt).toDateString() === today);
   const month = mine.filter((j) => Date.now() - new Date(j.completedAt) < 30 * DAY);
-  const sum = (a) => a.reduce((s, j) => s + j.price.total, 0);
+  const sum = (a) => a.reduce((s, j) => s + driverShare(j), 0);
   const r = req.user.driver;
   // Son 7 gün kazanç
   const week = [...Array(7)].map((_, i) => {
@@ -1145,6 +1179,8 @@ app.get('/api/admin/stats', admin, (req, res) => {
     smsLive: !!sms.configured(),
     completedJobs: d.jobs.filter((j) => j.status === 'completed').length,
     gmv: d.jobs.filter((j) => j.status === 'completed').reduce((s, j) => s + j.price.total, 0),
+    kaskoRevenue: d.jobs.filter((j) => j.status === 'completed').reduce((s, j) => s + (j.price.kasko || 0), 0),
+    kaskoJobs: d.jobs.filter((j) => j.kasko && !['cancelled', 'expired'].includes(j.status)).length,
     subRevenueMonth: d.payments.filter(month).reduce((s, p) => s + p.total, 0),
     subRevenueAll: d.payments.reduce((s, p) => s + p.total, 0),
     demo: DEMO_MODE,

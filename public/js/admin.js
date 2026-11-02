@@ -56,7 +56,7 @@
       ${s.pendingApprovals ? `<button class="card flat small" id="goAppr" style="margin-bottom:12px;border-color:var(--red);width:100%;text-align:left"><b>${s.pendingApprovals} çekicinin belgesi onay bekliyor →</b></button>` : ''}
       ${s.demo ? '<div class="card flat small" style="margin-bottom:12px;border-color:var(--amber)"><b>Demo modu açık:</b> gerçek çekici yokken sanal çekiciler talepleri kabul eder. Canlıya geçerken Render ortam değişkenlerinde <code>DEMO_MODE=false</code> yapın.</div>' : ''}
       <div class="stat-grid" style="grid-template-columns:repeat(auto-fill,minmax(170px,1fr))">
-        ${[['Müşteri', s.customers], ['Çekici', s.drivers], ['Aktif paket', s.activeSubs], ['Çevrimiçi çekici', s.onlineDrivers], ['Aktif talep', s.activeJobs], ['Randevulu talep', s.scheduledJobs], ['Onay bekleyen', s.pendingApprovals], ['Tamamlanan', s.completedJobs], ['Toplam iş hacmi', tl(s.gmv)], ['Paket geliri (30 gün)', tl(s.subRevenueMonth)], ['Paket geliri (toplam)', tl(s.subRevenueAll)]]
+        ${[['Müşteri', s.customers], ['Çekici', s.drivers], ['Aktif paket', s.activeSubs], ['Çevrimiçi çekici', s.onlineDrivers], ['Aktif talep', s.activeJobs], ['Randevulu talep', s.scheduledJobs], ['Onay bekleyen', s.pendingApprovals], ['Tamamlanan', s.completedJobs], ['Toplam iş hacmi', tl(s.gmv)], ['Kasko geliri', tl(s.kaskoRevenue || 0)], ['Kasko güvenceli talep', s.kaskoJobs || 0], ['Paket geliri (30 gün)', tl(s.subRevenueMonth)], ['Paket geliri (toplam)', tl(s.subRevenueAll)]]
           .map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('')}
       </div>
       <h2>Canlı harita</h2>
@@ -200,7 +200,7 @@
     const r = await api('/admin/jobs');
     C().innerHTML = `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>No</th><th>Hizmet</th><th>Müşteri</th><th>Çekici</th><th>Güzergah</th><th>Tutar</th><th>Durum</th><th>Tarih</th></tr></thead><tbody>
       ${r.jobs.map((j) => `<tr><td><b>${j.no}</b></td><td>${h(S.cfg.services[j.service]?.name)}</td><td>${h(j.customer?.name || '—')}</td><td>${h(j.driver?.name || '—')}${j.driver?.bot ? ' <span class="badge">demo</span>' : ''}</td>
-        <td class="small" style="max-width:260px">${h(j.pickup.address)}${j.dropoff ? ' → ' + h(j.dropoff.address) : ''}</td><td>${tl(j.price.total)}${j.price.code ? `<br><span class="tiny muted">${h(j.price.code.code)}</span>` : ''}</td><td>${statusBadge(j.status)}${j.verified && !['searching', 'accepted', 'cancelled', 'expired'].includes(j.status) ? '<br><span class="badge green" style="margin-top:4px">kod ✓</span>' : ''}</td><td class="small">${dt(j.createdAt)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">Henüz talep yok</td></tr>'}
+        <td class="small" style="max-width:260px">${h(j.pickup.address)}${j.dropoff ? ' → ' + h(j.dropoff.address) : ''}</td><td>${tl(j.price.total)}${j.kasko ? '<br><span class="badge green" style="margin-top:3px">Kasko</span>' : ''}${j.price.code ? `<br><span class="tiny muted">${h(j.price.code.code)}</span>` : ''}</td><td>${statusBadge(j.status)}${j.verified && !['searching', 'accepted', 'cancelled', 'expired'].includes(j.status) ? '<br><span class="badge green" style="margin-top:4px">kod ✓</span>' : ''}</td><td class="small">${dt(j.createdAt)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">Henüz talep yok</td></tr>'}
     </tbody></table></div>`;
   }
 

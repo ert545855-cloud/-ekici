@@ -243,10 +243,27 @@
     }
     if (S.mode !== 'idle') return;
     S.pickup = p;
-    $('#cpinLabel').innerHTML = '<b>Alış</b>Adres bulunuyor…';
-    S.pickupAddr = await YK.reverseGeocode(p);
-    if (S.mode === 'idle') $('#cpinLabel').innerHTML = '<b>Alış</b>' + h(S.pickupAddr);
+    if (S.pendingPickupAddr) {
+      S.pickupAddr = S.pendingPickupAddr;
+      S.pendingPickupAddr = null;
+    } else {
+      $('#cpinLabel').innerHTML = '<b>Alış</b>Adres bulunuyor…';
+      S.pickupAddr = await YK.reverseGeocode(p);
+    }
+    if (S.mode === 'idle') {
+      $('#cpinLabel').innerHTML = '<b>Alış</b>' + h(S.pickupAddr);
+      const pt = $('#pickTxt');
+      if (pt) pt.textContent = S.pickupAddr;
+    }
     loadNearby();
+  }
+  // Aramadan seçilen alış noktası: pini oraya taşı, adresi koru
+  function setPickup(p) {
+    if (!p) return;
+    S.pendingPickupAddr = p.address || null;
+    if (S.mode !== 'idle') { S.mode = 'idle'; renderSheet(); }
+    panToPin(p, 16);
+    toast('Alış noktası seçildi', 'Pin konumunu gerekirse kaydırarak düzeltebilirsiniz');
   }
   async function locateMe(silent) {
     try {
@@ -312,7 +329,11 @@
     setSheet(`
       <div class="promo-strip"><div class="t">Arkadaşını davet et, <span>250 TL kurtarma çeki</span> kazan!</div><button id="inviteBtn">Davet et</button></div>
       ${(S.scheduled || []).map((j) => `<button class="sched-banner" data-sj="${j.id}">${I.cal}<span class="grow"><b>Randevulu: ${h(fmtWhen(j.scheduledAt))}</b><br><span class="muted">${h(S.cfg.services[j.service]?.name)} · ${h(j.pickup.address || '')}</span></span><span class="chev">${I.chev}</span></button>`).join('')}
-      <button class="search" id="destBtn">${I.search}<span class="grow ellipsis">${S.draft.dropoff ? h(S.draft.dropoff.address) : 'Nereye çekilecek?'}</span>${S.draft.dropoff ? `<span id="clrDest" style="color:var(--muted)">${I.x}</span>` : ''}</button>
+      <div class="route-box">
+        <button class="rb-row" id="pickBtn"><span class="rb-dot a"></span><span class="grow"><span class="rb-k">ALIŞ NOKTASI · aracın bulunduğu yer</span><span class="rb-v ellipsis" id="pickTxt">${h(S.pickupAddr || 'Konum alınıyor…')}</span></span><span class="rb-ic">${I.search}</span></button>
+        <div class="rb-sep"></div>
+        <button class="rb-row" id="destBtn"><span class="rb-dot b"></span><span class="grow"><span class="rb-k">VARIŞ NOKTASI</span><span class="rb-v ellipsis ${S.draft.dropoff ? '' : 'muted'}">${S.draft.dropoff ? h(S.draft.dropoff.address) : 'Nereye çekilecek?'}</span></span><span class="rb-ic">${S.draft.dropoff ? `<span id="clrDest">${I.x}</span>` : I.search}</span></button>
+      </div>
       <div class="chips">
         ${addrs.map((a, i) => `<button class="chip" data-a="${i}">${I.pin}${h(a.label)}</button>`).join('')}
         <button class="chip" id="addAddr">+ Yeni adres ekle</button>
@@ -332,6 +353,7 @@
       <div style="height:6px"></div>`);
     $('#inviteBtn').onclick = shareInvite;
     $$('[data-sj]').forEach((b) => (b.onclick = () => jobDetail(S.scheduled.find((x) => x.id === b.dataset.sj))));
+    $('#pickBtn').onclick = () => openDestSearch((p) => setPickup(p), 'Aracınız nerede?', 'idle', 'pickup');
     $('#destBtn').onclick = (e) => {
       if (e.target.closest('#clrDest')) { S.draft.dropoff = null; return sheetIdle(); }
       openDestSearch((p) => { S.draft.dropoff = p; sheetIdle(); toast('Varış noktası seçildi', 'Şimdi hizmet türünü seçin'); });
@@ -410,6 +432,8 @@
         <button class="li" id="editPick"><span class="lic" style="background:var(--brand-soft);color:var(--brand-2)">${I.pin}</span><span class="grow"><span class="tiny muted bold">ALIŞ NOKTASI</span><br><span class="ellipsis" style="display:block">${h(d.pickup.address || 'Seçilen konum')}</span></span><span class="chev">${I.chev}</span></button>
         ${s.needsDropoff ? `<button class="li" id="editDrop"><span class="lic" style="background:var(--ink);color:#fff">${I.nav}</span><span class="grow"><span class="tiny muted bold">VARIŞ NOKTASI</span><br><span class="ellipsis" style="display:block">${h(d.dropoff?.address || 'Seçin')}</span></span><span class="chev">${I.chev}</span></button>` : ''}
       </div>
+      ${s.needsDropoff ? `<label class="kasko ${d.kasko ? 'on' : ''}" id="kaskoBox"><input type="checkbox" id="kaskoIn" ${d.kasko ? 'checked' : ''}>
+        <span class="k-ic">${I.shield}</span><span class="grow"><b>Kasko güvencesi</b> <span class="k-price">+${tl(S.cfg.kaskoPrice || 350)}</span><br><span class="small muted">Yükleme, çekme ve indirme sırasında aracınızda oluşabilecek hasarlar güvence altında.</span></span></label>` : ''}
       <div class="row" style="margin-top:12px">
         <label class="field grow"><span>Plaka</span><input id="vPlate" value="${h(d.vehicle.plate)}" placeholder="34 ABC 123" style="text-transform:uppercase"></label>
         <label class="field grow"><span>Marka / model</span><input id="vModel" value="${h(d.vehicle.model)}" placeholder="Örn. Renault Clio"></label>
@@ -423,7 +447,7 @@
       <button class="btn" id="callBtn" style="margin-top:14px" disabled>${I.tow} Çekici çağır</button>
       <p class="tiny muted center" style="margin:8px 0 0">Ödeme hizmet tamamlandığında çekiciye yapılır. Kabulden sonra iptal ücretsizdir.</p>`);
     $('#rqBack').onclick = () => { S.mode = 'idle'; S.jobLayer.clearLayers(); renderSheet(); panToPin(d.pickup); };
-    $('#editPick').onclick = () => { S.mode = 'idle'; renderSheet(); panToPin(d.pickup); toast('Alış noktasını düzenleyin', 'Pini aracın olduğu yere getirip hizmeti tekrar seçin'); };
+    $('#editPick').onclick = () => openDestSearch((p) => { d.pickup = p; S.pickupAddr = p.address; sheetRequest(); drawDraft(); }, 'Aracınız nerede?', 'request', 'pickup');
     $('#editDrop') && ($('#editDrop').onclick = () => openDestSearch((p) => { d.dropoff = p; sheetRequest(); drawDraft(); }, 'Aracınız nereye çekilecek?', 'request'));
     $$('[data-sub]').forEach((b) => (b.onclick = () => { d.sub = b.dataset.sub; sheetRequest(); }));
     $$('#whenSeg button').forEach((b) => (b.onclick = () => {
@@ -436,6 +460,7 @@
     }));
     $('#whenIn').onchange = (e) => { if (e.target.value) { d.scheduledAt = new Date(e.target.value).toISOString(); loadQuote(); } };
     $$('#paySeg button').forEach((b) => (b.onclick = () => { d.payment = b.dataset.p; $$('#paySeg button').forEach((x) => x.classList.toggle('on', x === b)); }));
+    $('#kaskoIn') && ($('#kaskoIn').onchange = (e) => { d.kasko = e.target.checked; $('#kaskoBox').classList.toggle('on', d.kasko); loadQuote(); });
     $('#vPlate').oninput = (e) => (d.vehicle.plate = e.target.value.toUpperCase());
     $('#vModel').oninput = (e) => (d.vehicle.model = e.target.value);
     $('#vNote').oninput = (e) => (d.note = e.target.value);
@@ -451,7 +476,7 @@
   async function loadQuote(fromCode) {
     const d = S.draft;
     try {
-      const q = await api('/quote', { body: { service: d.service, sub: d.sub, pickup: d.pickup, dropoff: d.dropoff, code: d.code, scheduledAt: d.scheduledAt } });
+      const q = await api('/quote', { body: { service: d.service, sub: d.sub, pickup: d.pickup, dropoff: d.dropoff, code: d.code, scheduledAt: d.scheduledAt, kasko: !!d.kasko } });
       S.quote = q;
       if (q.codeError) {
         toast(q.codeError, '', true);
@@ -462,7 +487,8 @@
         $('#codeBtn').textContent = 'Kaldır';
       }
       $('#qBox').innerHTML = `
-        ${q.lines.map((l) => `<div class="pl"><span>${h(l.label)}</span><span>${tl(l.amount)}</span></div>`).join('')}
+        ${q.lines.map((l) => `<div class="pl ${l.kasko ? 'kasko-line' : ''}"><span>${l.kasko ? '🛡️ ' : ''}${h(l.label)}</span><span>${tl(l.amount)}</span></div>`).join('')}
+        ${q.distanceKm ? `<div class="tiny muted" style="margin:-2px 0 4px">${q.routed ? 'Yol rotasına göre mesafe' : 'Tahmini yol mesafesi'} · ${q.distanceKm} km</div>` : ''}
         ${q.discount ? `<div class="pl disc"><span>İndirim (${h(q.code.code)})</span><span>−${tl(q.discount)}</span></div>` : ''}
         ${q.credit ? `<div class="pl disc"><span>Kurtarma çeki</span><span>−${tl(q.credit)}</span></div>` : ''}
         <div class="pl total"><span>Toplam</span><span>${tl(q.total)}</span></div>`;
@@ -478,8 +504,8 @@
     btn.disabled = true;
     try {
       LS.set('vehicle', d.vehicle);
-      const r = await api('/jobs', { body: { service: d.service, sub: d.sub, pickup: d.pickup, dropoff: d.dropoff, code: d.code, payment: d.payment, vehicle: d.vehicle, note: d.note, scheduledAt: d.scheduledAt } });
-      S.draft = { service: null, sub: 'aku', dropoff: null, code: '', payment: 'cash', note: '', vehicle: d.vehicle, scheduledAt: null };
+      const r = await api('/jobs', { body: { service: d.service, sub: d.sub, pickup: d.pickup, dropoff: d.dropoff, code: d.code, payment: d.payment, vehicle: d.vehicle, note: d.note, scheduledAt: d.scheduledAt, kasko: !!d.kasko } });
+      S.draft = { service: null, sub: 'aku', dropoff: null, code: '', payment: 'cash', note: '', vehicle: d.vehicle, scheduledAt: null, kasko: false };
       if (r.job.status === 'scheduled') {
         S.mode = 'idle';
         S.jobLayer.clearLayers();
@@ -601,6 +627,7 @@
       </div>
       ${j.photos?.pickup?.length ? `<div style="margin-top:12px"><div class="tiny bold muted" style="margin-bottom:6px">YÜKLEME ÖNCESİ FOTOĞRAFLAR</div>${YK.photoStrip(j.photos.pickup)}</div>` : ''}
       ${j.photos?.dropoff?.length ? `<div style="margin-top:10px"><div class="tiny bold muted" style="margin-bottom:6px">TESLİM FOTOĞRAFLARI</div>${YK.photoStrip(j.photos.dropoff)}</div>` : ''}
+      ${j.kasko ? `<div class="pin-ok" style="margin-top:10px">${I.shield}<span>Kasko güvenceli taşıma</span></div>` : ''}
       <details style="margin-top:14px"><summary class="small bold" style="cursor:pointer">Talep detayı · ${j.no} · ${tl(j.price.total)}</summary>
         <div class="price-lines" style="margin-top:8px">${j.price.lines.map((l) => `<div class="pl"><span>${h(l.label)}</span><span>${tl(l.amount)}</span></div>`).join('')}
         ${j.price.discount ? `<div class="pl disc"><span>İndirim</span><span>−${tl(j.price.discount)}</span></div>` : ''}${j.price.credit ? `<div class="pl disc"><span>Kurtarma çeki</span><span>−${tl(j.price.credit)}</span></div>` : ''}
@@ -653,20 +680,30 @@
   }
 
   // ---------------- Varış arama ----------------
-  function openDestSearch(cb, title = 'Nereye çekilecek?', returnMode) {
+  function openDestSearch(cb, title = 'Nereye çekilecek?', returnMode, kind = 'dropoff') {
     const addrs = S.user.addresses || [];
+    const isPick = kind === 'pickup';
     const m = modal(`
       <h3>${h(title)}</h3>
-      <div class="search" style="padding:10px 14px">${I.search}<input id="dq" placeholder="Adres, sanayi sitesi, servis ara…" autocomplete="off"></div>
+      <div class="search" style="padding:10px 14px">${I.search}<input id="dq" placeholder="${isPick ? 'Aracınızın bulunduğu adres, cadde, mevki…' : 'Adres, sanayi sitesi, servis ara…'}" autocomplete="off"></div>
       <div id="dres" style="margin-top:6px">
-        <button class="result" id="pickOnMap">${I.pin}<span><b>Haritadan seç</b><br><span class="small muted">Pini sürükleyerek varış noktasını belirleyin</span></span></button>
+        ${isPick ? `<button class="result" id="useMyLoc">${I.locate}<span><b>Mevcut konumum</b><br><span class="small muted">Telefonunuzun GPS konumunu kullan</span></span></button>` : ''}
+        <button class="result" id="pickOnMap">${I.pin}<span><b>Haritadan seç</b><br><span class="small muted">${isPick ? 'Pini aracın bulunduğu yere getirin' : 'Pini sürükleyerek varış noktasını belirleyin'}</span></span></button>
         ${addrs.map((a, i) => `<button class="result" data-i="${i}">${I.home}<span><b>${h(a.label)}</b><br><span class="small muted">${h(a.address)}</span></span></button>`).join('')}
         <div class="small muted" style="padding:10px 4px">Örnek: “Ostim Sanayi”, “Pendik Yetkili Servis”, “İkitelli Oto Sanayi”</div>
       </div>`);
     const input = $('#dq', m.el);
     setTimeout(() => input.focus(), 250);
+    $('#useMyLoc', m.el) && ($('#useMyLoc', m.el).onclick = async () => {
+      try { const p = await YK.getPosition(); m.close(); const address = await YK.reverseGeocode(p); cb({ lat: p.lat, lng: p.lng, address }); } catch (e) { fail(e); }
+    });
     $('#pickOnMap', m.el).onclick = () => {
       m.close();
+      if (isPick) {
+        if (S.mode !== 'idle') { S.mode = 'idle'; renderSheet(); if (S.draft.pickup) panToPin(S.draft.pickup); }
+        toast('Pini aracın bulunduğu yere getirin', 'Ardından hizmet türünü seçin');
+        return;
+      }
       S.pickDropCb = cb;
       S.pickDropReturn = returnMode || (S.mode === 'request' ? 'request' : 'idle');
       S.mode = 'pickDrop';

@@ -1,8 +1,9 @@
 // Hizmetler, fiyatlandırma ve indirim kodu doğrulama
 const SERVICES = {
-  oto: { key: 'oto', name: 'Oto Çekici', desc: 'Binek araçlar için kurtarma', base: 1500, perKm: 55, needsDropoff: true, eta: 1 },
-  agir: { key: 'agir', name: 'Ağır Vasıta', desc: 'Kamyon ve tırlar için çekme', base: 4500, perKm: 140, needsDropoff: true, eta: 1.4 },
-  moto: { key: 'moto', name: 'Motosiklet', desc: 'Özel motor platformu', base: 900, perKm: 35, needsDropoff: true, eta: 0.9 },
+  // Km ücretleri: binek 200 TL, ağır vasıta/tır 300 TL, motosiklet 150 TL (ortam değişkeniyle değiştirilebilir)
+  oto: { key: 'oto', name: 'Oto Çekici', desc: 'Binek araçlar için kurtarma', base: Number(process.env.PRICE_BASE_OTO || 1500), perKm: Number(process.env.PRICE_KM_OTO || 200), needsDropoff: true, eta: 1 },
+  agir: { key: 'agir', name: 'Ağır Vasıta', desc: 'Kamyon ve tırlar için çekme', base: Number(process.env.PRICE_BASE_AGIR || 4500), perKm: Number(process.env.PRICE_KM_AGIR || 300), needsDropoff: true, eta: 1.4 },
+  moto: { key: 'moto', name: 'Motosiklet', desc: 'Özel motor platformu', base: Number(process.env.PRICE_BASE_MOTO || 900), perKm: Number(process.env.PRICE_KM_MOTO || 150), needsDropoff: true, eta: 0.9 },
   yol: { key: 'yol', name: 'Yol Yardım', desc: 'Akü, yakıt, lastik, çilingir', base: 0, perKm: 0, needsDropoff: false, eta: 0.8 },
 };
 
@@ -14,6 +15,7 @@ const ROADSIDE = {
 };
 
 const SUBSCRIPTION_PRICE = Number(process.env.SUBSCRIPTION_PRICE || 10000);
+const KASKO_PRICE = Number(process.env.KASKO_PRICE || 350); // isteğe bağlı taşıma (kasko) güvencesi
 const COMMISSION_RATE = 0; // Abonelik modelinde çekiciden komisyon alınmaz
 
 function haversineKm(a, b) {
@@ -61,7 +63,8 @@ function applyDiscount(amount, code) {
   return Math.round(Math.min(d, amount));
 }
 
-function quote(db, { service, sub, pickup, dropoff, code, user, at }) {
+// distanceKm: sunucunun gerçek yol rotasından hesapladığı mesafe (yoksa tahmin edilir)
+function quote(db, { service, sub, pickup, dropoff, code, user, at, kasko, distanceKm: routeKm }) {
   const when = at ? new Date(at) : new Date();
   const s = SERVICES[service];
   if (!s) throw new Error('Geçersiz hizmet');
@@ -71,9 +74,9 @@ function quote(db, { service, sub, pickup, dropoff, code, user, at }) {
   const lines = [];
   if (s.needsDropoff) {
     if (!dropoff || typeof dropoff.lat !== 'number') throw new Error('Varış noktası gerekli');
-    distanceKm = Math.max(1, roadKm(pickup, dropoff));
+    distanceKm = Math.max(1, Math.round((routeKm || roadKm(pickup, dropoff)) * 10) / 10);
     lines.push({ label: 'Açılış ücreti', amount: s.base });
-    lines.push({ label: `Mesafe (${distanceKm} km)`, amount: Math.round(distanceKm * s.perKm) });
+    lines.push({ label: `Mesafe (${distanceKm} km × ${s.perKm} TL)`, amount: Math.round(distanceKm * s.perKm) });
     subtotal = s.base + Math.round(distanceKm * s.perKm);
   } else {
     const r = ROADSIDE[sub] || ROADSIDE.aku;
@@ -95,10 +98,16 @@ function quote(db, { service, sub, pickup, dropoff, code, user, at }) {
       codeInfo = { code: v.code.code, label: v.code.label || v.code.code };
     } else codeError = v.error;
   }
+  // Kasko güvencesi indirimden etkilenmez
+  const kaskoFee = kasko && s.needsDropoff ? KASKO_PRICE : 0;
+  if (kaskoFee) {
+    lines.push({ label: 'Kasko güvencesi', amount: kaskoFee, kasko: true });
+    subtotal += kaskoFee;
+  }
   let credit = 0;
   if (user && user.credits > 0) credit = Math.min(user.credits, subtotal - discount);
   const total = Math.max(0, subtotal - discount - credit);
-  return { service: s.key, sub: s.needsDropoff ? null : (ROADSIDE[sub] ? sub : 'aku'), distanceKm, lines, subtotal, discount, credit, total, code: codeInfo, codeError, night: isNight(when) };
+  return { service: s.key, sub: s.needsDropoff ? null : (ROADSIDE[sub] ? sub : 'aku'), distanceKm, routed: !!routeKm, lines, subtotal, discount, credit, kasko: kaskoFee, total, code: codeInfo, codeError, night: isNight(when) };
 }
 
 function subscriptionQuote(db, { code, user }) {
@@ -115,4 +124,4 @@ function subscriptionQuote(db, { code, user }) {
   return { price: SUBSCRIPTION_PRICE, discount, total: SUBSCRIPTION_PRICE - discount, code: codeInfo, codeError };
 }
 
-module.exports = { SERVICES, ROADSIDE, SUBSCRIPTION_PRICE, COMMISSION_RATE, haversineKm, roadKm, quote, subscriptionQuote, validateCode, applyDiscount };
+module.exports = { KASKO_PRICE, SERVICES, ROADSIDE, SUBSCRIPTION_PRICE, COMMISSION_RATE, haversineKm, roadKm, quote, subscriptionQuote, validateCode, applyDiscount };

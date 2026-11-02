@@ -58,6 +58,13 @@ Martı TAG mantığında çalışan çekici çağırma uygulaması: müşteri ha
 - “İleri tarih” ile 30 dk – 14 gün sonrası için randevu; saatinden 45 dk önce otomatik çekici aranır, 2 saat kala hatırlatma
 - Acil düğmesi: 112 / 155 / 110 / 156, operatöre okunacak konum, acil kişilere konum SMS'i, “Kaza yaptım, çekici çağır”
 
+**Fiyatlandırma**
+- Km başına: binek (oto çekici) **200 TL**, ağır vasıta / tır **300 TL**, motosiklet **150 TL** + açılış ücreti
+- Mesafe gerçek yol rotasından hesaplanır (Mapbox Directions → OSRM; ikisi de yoksa tahmini)
+- 22:00–06:00 gece tarifesi +%20
+- İsteğe bağlı **kasko güvencesi: +350 TL** (indirim kodundan etkilenmez; çekici kazancına dahil edilmez, yönetim panelinde ayrı raporlanır)
+- Ortam değişkenleri: `PRICE_KM_OTO`, `PRICE_KM_AGIR`, `PRICE_KM_MOTO`, `PRICE_BASE_OTO`, `PRICE_BASE_AGIR`, `PRICE_BASE_MOTO`, `KASKO_PRICE`
+
 **Eşleşme kodu (güvenli teslim)**
 - Her talep için 4 haneli eşleşme kodu üretilir; kodu yalnızca müşteri görür (çekici ve yönetici göremez).
 - Çekici “Konuma vardım” dediğinde kod girme ekranı açılır. Kod doğrulanmadan araç yüklenemez, yol yardımı başlatılamaz ve iş tamamlanamaz.

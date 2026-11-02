@@ -280,8 +280,8 @@
     const s = S.cfg.services[o.service];
     return `
       ${o.scheduledAt ? `<div class="sched-banner" style="margin-bottom:8px">${I.cal}<span class="grow"><b>Randevulu: ${new Date(o.scheduledAt).toLocaleString('tr-TR', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</b></span></div>` : ''}
-      <div class="row between"><span class="badge amber">YENİ TALEP · ${o.no}</span><span class="badge">${o.payment === 'card' ? 'Kart (POS)' : 'Nakit'}</span></div>
-      <div class="row" style="margin:12px 0 4px"><span class="thumb">${svcImg(o.service)}</span><div class="grow"><b style="font-size:19px">${h(s.name)}${o.sub ? ' · ' + h(S.cfg.roadside[o.sub]?.name || '') : ''}</b><div class="small muted">${o.vehicle?.plate ? h(o.vehicle.plate) + ' · ' : ''}${h(o.vehicle?.model || 'Araç bilgisi yok')}</div></div><div class="center"><b style="font-size:22px;color:var(--brand-2)">${tl(o.price.total)}</b><div class="tiny muted">kazanç</div></div></div>
+      <div class="row between"><span class="badge amber">YENİ TALEP · ${o.no}</span><span class="row" style="gap:4px">${o.kasko ? `<span class="badge green">${I.shield.replace('<svg', '<svg width="12" height="12"')} Kasko</span>` : ''}<span class="badge">${o.payment === 'card' ? 'Kart (POS)' : 'Nakit'}</span></span></div>
+      <div class="row" style="margin:12px 0 4px"><span class="thumb">${svcImg(o.service)}</span><div class="grow"><b style="font-size:19px">${h(s.name)}${o.sub ? ' · ' + h(S.cfg.roadside[o.sub]?.name || '') : ''}</b><div class="small muted">${o.vehicle?.plate ? h(o.vehicle.plate) + ' · ' : ''}${h(o.vehicle?.model || 'Araç bilgisi yok')}</div></div><div class="center"><b style="font-size:22px;color:var(--brand-2)">${tl(o.price.total - (o.price.kasko || 0))}</b><div class="tiny muted">kazanç</div></div></div>
       <div class="card flat small" style="margin-top:10px">
         <div class="row"><span style="color:var(--brand-2)">${I.pin}</span><span class="grow"><b>${o.distanceToPickup != null ? o.distanceToPickup + ' km uzakta' : 'Alış'}</b><br>${h(o.pickup.address)}</span></div>
         ${o.dropoff ? `<div class="row" style="margin-top:8px"><span>${I.nav}</span><span class="grow"><b>${o.distanceKm} km çekme</b><br>${h(o.dropoff.address)}</span></div>` : ''}
@@ -364,7 +364,8 @@
     }[j.status];
     const title = { accepted: 'Müşteriye gidiyorsunuz', arrived: 'Müşteri konumundasınız', towing: 'Araç çekiliyor', servicing: 'Yol yardımı yapılıyor' }[j.status];
     setSheet(`
-      <div class="row between" style="margin-top:2px"><div><b style="font-size:18px">${title}</b><div class="small muted">${h(s.name)} · ${j.no}</div></div><div class="center"><b style="font-size:20px;color:var(--brand-2)">${tl(j.price.total)}</b><div class="tiny muted">${j.payment === 'card' ? 'Kart (POS)' : 'Nakit'} tahsil</div></div></div>
+      <div class="row between" style="margin-top:2px"><div><b style="font-size:18px">${title}</b><div class="small muted">${h(s.name)} · ${j.no}</div></div><div class="center"><b style="font-size:20px;color:var(--brand-2)">${tl(j.price.total)}</b><div class="tiny muted">${j.payment === 'card' ? 'Kart (POS)' : 'Nakit'} tahsil${j.price.kasko ? `<br>kasko ${tl(j.price.kasko)} dahil` : ''}</div></div></div>
+      ${j.kasko ? `<div class="pin-ok" style="margin-top:10px;background:var(--amber-soft);color:#8a5200">${I.shield}<span>Kasko güvenceli iş · yükleme ve indirmede ekstra özen</span></div>` : ''}
       <div class="driver-card" style="margin-top:12px"><div class="avatar" style="background:var(--brand)">${initials(j.customer?.name)}</div><div class="grow"><b>${h(j.customer?.name)}</b><div class="small muted">${j.vehicle?.plate ? h(j.vehicle.plate) + ' · ' : ''}${h(j.vehicle?.model || '')}</div></div></div>
       <div class="actions" style="grid-template-columns:repeat(${['accepted', 'arrived'].includes(j.status) ? 4 : 3},1fr)">
         <button class="act call" id="cCall">${I.phone}Ara</button>
