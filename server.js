@@ -104,16 +104,23 @@ function publicDriver(u) {
     bot: !!u.bot,
   };
 }
-function publicJob(j, viewer) {
+// forCustomer=true ise eşleşme kodu (PIN) dahil edilir; çekici ve admin kodu asla görmez
+function publicJob(j, forCustomer = false) {
   const customer = db().users.find((u) => u.id === j.customerId);
   const driver = j.driverId ? findDriver(j.driverId) : null;
+  const { pin, pinTries, pinLockedUntil, ...rest } = j;
   return {
-    ...j,
+    ...rest,
+    pin: forCustomer ? pin : undefined,
+    verified: isVerified(j),
+    pinLocked: !!(pinLockedUntil && pinLockedUntil > Date.now()),
     customer: customer ? { id: customer.id, name: customer.name, phone: customer.phone } : null,
     driver: publicDriver(driver),
     eta: driver && driver.driver?.lat != null ? etaMin(driver.driver, j.status === 'towing' ? j.dropoff : j.pickup) : null,
   };
 }
+const isVerified = (j) => j.pin == null || !!j.verified;
+const newPin = () => String(crypto.randomInt(1000, 10000));
 function etaMin(from, to) {
   if (!from || !to || from.lat == null) return null;
   return Math.max(1, Math.round((P.roadKm(from, to) / 32) * 60));
@@ -251,6 +258,10 @@ function runBot(job) {
       setStatus(j, 'arrived');
       setTimeout(() => {
         if (j.status !== 'arrived') return;
+        verifyJob(j);
+      }, 6000);
+      setTimeout(() => {
+        if (j.status !== 'arrived' || !isVerified(j)) return;
         if (j.dropoff) {
           setStatus(j, 'towing');
           moveBotTo(bot, j, j.dropoff, () => {
@@ -264,7 +275,7 @@ function runBot(job) {
             bot.driver.busy = false;
           }, 9000);
         }
-      }, 7000);
+      }, 10000);
     });
   }, 2500);
 }
@@ -287,7 +298,8 @@ function pushTimeline(j, status, note) {
   j.timeline.push({ status, at: new Date().toISOString(), note: note || STATUS_TEXT[status] });
 }
 function broadcastJob(j) {
-  const rooms = ['job:' + j.id, 'user:' + j.customerId, 'role:admin'];
+  io.to('user:' + j.customerId).emit('job:update', publicJob(j, true));
+  const rooms = ['role:admin'];
   if (j.driverId) rooms.push('user:' + j.driverId);
   io.to(rooms).emit('job:update', publicJob(j));
   store.save();
@@ -337,7 +349,7 @@ function assignDriver(j, d) {
   j.acceptedAt = new Date().toISOString();
   pushTimeline(j, 'accepted', `${d.name} talebi kabul etti`);
   const eta = etaMin(d.driver, j.pickup);
-  notify(j.customerId, 'Çekiciniz yolda 🚛', `${d.name} · ${d.driver.plate}${eta ? ' · ~' + eta + ' dk' : ''}`, { jobId: j.id });
+  notify(j.customerId, 'Çekiciniz yolda 🚛', `${d.name} · ${d.driver.plate}${eta ? ' · ~' + eta + ' dk' : ''} · Eşleşme kodunuz: ${j.pin}`, { jobId: j.id });
   (j.offeredTo || []).forEach((id) => id !== d.id && io.to('user:' + id).emit('job:gone', { id: j.id }));
   broadcastJob(j);
   emitDriverLoc(j, d);
@@ -345,11 +357,19 @@ function assignDriver(j, d) {
 function setStatus(j, status) {
   pushTimeline(j, status);
   const msg = {
-    arrived: ['Çekici geldi 📍', 'Çekiciniz bulunduğunuz konumda.'],
+    arrived: ['Çekici geldi 📍', `Eşleşme kodunuz ${j.pin}. Kodu yalnızca yanınızdaki çekiciye (${findDriver(j.driverId)?.driver?.plate || ''}) söyleyin.`],
     towing: ['Aracınız yolda', 'Aracınız varış noktasına çekiliyor. Canlı takip edebilirsiniz.'],
     servicing: ['Yol yardımı başladı', 'Ekibimiz aracınız üzerinde çalışıyor.'],
   }[status];
   if (msg) notify(j.customerId, msg[0], msg[1], { jobId: j.id });
+  broadcastJob(j);
+}
+function verifyJob(j) {
+  j.verified = true;
+  j.verifiedAt = new Date().toISOString();
+  if (j.status === 'accepted') pushTimeline(j, 'arrived');
+  j.timeline.push({ status: j.status, at: j.verifiedAt, note: 'Eşleşme kodu doğrulandı' });
+  notify(j.customerId, 'Eşleşme doğrulandı ✅', 'Çekiciniz kodunuzu doğru girdi. Aracınızı güvenle teslim edebilirsiniz.', { jobId: j.id });
   broadcastJob(j);
 }
 function completeJob(j) {
@@ -399,11 +419,12 @@ app.use(
   })
 );
 
+app.use('/vendor/googlemutant', express.static(path.join(__dirname, 'node_modules', 'leaflet.gridlayer.googlemutant', 'dist'), { maxAge: '30d' }));
 app.use('/vendor/leaflet', express.static(path.join(__dirname, 'node_modules', 'leaflet', 'dist'), { maxAge: '30d' }));
 
 app.get('/health', (req, res) => res.json({ ok: true, demo: DEMO_MODE }));
 app.get('/api/config', (req, res) =>
-  res.json({ services: P.SERVICES, roadside: P.ROADSIDE, subscriptionPrice: P.SUBSCRIPTION_PRICE, vapidPublicKey: db().meta.vapid.publicKey, demo: DEMO_MODE, support: process.env.SUPPORT_PHONE || '4440000' })
+  res.json({ services: P.SERVICES, roadside: P.ROADSIDE, subscriptionPrice: P.SUBSCRIPTION_PRICE, vapidPublicKey: db().meta.vapid.publicKey, demo: DEMO_MODE, googleMapsKey: process.env.GOOGLE_MAPS_API_KEY || '', support: process.env.SUPPORT_PHONE || '4440000' })
 );
 
 // --- Hesaplar ---
@@ -571,23 +592,25 @@ app.post('/api/jobs', auth('customer'), wrap((req, res) => {
     note: String(b.note || '').slice(0, 300),
     contactPhone: normPhone(b.contactPhone || u.phone),
     status: 'searching',
+    pin: newPin(),
+    verified: false,
     timeline: [],
     createdAt: new Date().toISOString(),
   };
   pushTimeline(j, 'searching');
   db().jobs.push(j);
   dispatch(j);
-  res.json({ job: publicJob(j) });
+  res.json({ job: publicJob(j, true) });
 }));
 
 app.get('/api/jobs/active', auth('customer', 'driver'), (req, res) => {
   const key = req.user.role === 'driver' ? 'driverId' : 'customerId';
   const j = db().jobs.filter((x) => x[key] === req.user.id && ACTIVE.includes(x.status)).pop();
-  res.json({ job: j ? publicJob(j) : null });
+  res.json({ job: j ? publicJob(j, req.user.role === 'customer') : null });
 });
 app.get('/api/jobs', auth('customer', 'driver'), (req, res) => {
   const key = req.user.role === 'driver' ? 'driverId' : 'customerId';
-  res.json({ jobs: db().jobs.filter((x) => x[key] === req.user.id).slice(-60).reverse().map((j) => publicJob(j)) });
+  res.json({ jobs: db().jobs.filter((x) => x[key] === req.user.id).slice(-60).reverse().map((j) => publicJob(j, req.user.role === 'customer')) });
 });
 app.get('/api/jobs/offers', auth('driver'), (req, res) => {
   const u = req.user;
@@ -619,8 +642,36 @@ app.post('/api/jobs/:id/status', auth('driver'), wrap((req, res) => {
   const next = req.body.status;
   const flow = { accepted: ['arrived'], arrived: [j.dropoff ? 'towing' : 'servicing'], towing: ['completed'], servicing: ['completed'] };
   if (!(flow[j.status] || []).includes(next)) throw new Error('Geçersiz durum geçişi');
+  if (j.status === 'arrived' && !isVerified(j)) throw new Error('Önce müşterinin 4 haneli eşleşme kodunu girin');
   if (next === 'completed') completeJob(j);
   else setStatus(j, next);
+  res.json({ job: publicJob(j) });
+}));
+app.post('/api/jobs/:id/verify', auth('driver'), wrap((req, res) => {
+  const j = jobFor(req);
+  if (j.driverId !== req.user.id) throw new Error('Bu iş size ait değil');
+  if (!['accepted', 'arrived'].includes(j.status)) throw new Error('Bu aşamada kod girilemez');
+  if (isVerified(j)) return res.json({ job: publicJob(j) });
+  if (j.pinLockedUntil && j.pinLockedUntil > Date.now()) {
+    throw new Error(`Çok fazla hatalı deneme. ${Math.ceil((j.pinLockedUntil - Date.now()) / 60000)} dk sonra tekrar deneyin.`);
+  }
+  const given = String(req.body?.pin || '').replace(/\D/g, '');
+  if (given !== j.pin) {
+    j.pinTries = (j.pinTries || 0) + 1;
+    const left = 5 - j.pinTries;
+    if (left <= 0) {
+      j.pinTries = 0;
+      j.pinLockedUntil = Date.now() + 2 * 60 * 1000;
+      notify(j.customerId, 'Güvenlik uyarısı ⚠️', 'Eşleşme kodu art arda 5 kez hatalı girildi. Kodunuzu yalnızca plakası eşleşen çekiciye söyleyin.', { jobId: j.id });
+      store.save();
+      throw new Error('Kod 5 kez hatalı girildi. 2 dakika bekleyin ve müşteriyle kodu teyit edin.');
+    }
+    store.save();
+    throw new Error(`Kod hatalı. ${left} deneme hakkınız kaldı.`);
+  }
+  j.pinTries = 0;
+  j.pinLockedUntil = null;
+  verifyJob(j);
   res.json({ job: publicJob(j) });
 }));
 app.post('/api/jobs/:id/cancel', auth('customer', 'driver'), wrap((req, res) => {
@@ -644,9 +695,11 @@ app.post('/api/jobs/:id/cancel', auth('customer', 'driver'), wrap((req, res) => 
     pushTimeline(j, 'searching', 'Çekici işi bıraktı, yeni çekici aranıyor');
     notify(j.customerId, 'Yeni çekici aranıyor', 'Atanan çekici talebi bırakmak zorunda kaldı. Size en yakın çekiciyi arıyoruz.', { jobId: j.id });
     broadcastJob(j);
+    j.verified = false;
+    j.pinTries = 0;
     dispatch(j);
   }
-  res.json({ job: publicJob(j) });
+  res.json({ job: publicJob(j, u.role === 'customer') });
 }));
 app.post('/api/jobs/:id/rate', auth('customer'), wrap((req, res) => {
   const j = jobFor(req);
@@ -661,7 +714,7 @@ app.post('/api/jobs/:id/rate', auth('customer'), wrap((req, res) => {
     if (!d.bot) notify(d.id, `${'★'.repeat(stars)} yeni puan`, j.rating.comment || `${j.no} için ${stars} yıldız aldınız.`);
   }
   store.save();
-  res.json({ job: publicJob(j) });
+  res.json({ job: publicJob(j, true) });
 }));
 
 // --- Çekici: durum, abonelik, istatistik ---
@@ -859,7 +912,7 @@ io.on('connection', (socket) => {
     const user = u();
     if (j && user && (j.customerId === user.id || j.driverId === user.id || user.role === 'admin')) {
       socket.join('job:' + j.id);
-      socket.emit('job:update', publicJob(j));
+      socket.emit('job:update', publicJob(j, j.customerId === user.id));
       const d = j.driverId && findDriver(j.driverId);
       if (d && d.driver.lat != null) emitDriverLoc(j, d);
     }

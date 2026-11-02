@@ -11,6 +11,7 @@
   async function boot() {
     YK.registerSW();
     try { S.cfg = await api('/config'); } catch { S.cfg = { services: {}, roadside: {} }; }
+    YK.initGoogle(S.cfg.googleMapsKey);
     if (auth.token) { try { S.user = (await api('/me', { noLogout: true })).user; } catch { auth.token = null; } }
     if (!S.user || S.user.role !== 'driver') { auth.token = null; return renderAuth(); }
     if (!LS.get('permsDone', false)) return renderPerms();
@@ -122,6 +123,9 @@
     $('#locBtn').onclick = () => S.me && S.map.setView([S.me.lat, S.me.lng], 15);
     S.map = YK.createMap('map', S.me ? [S.me.lat, S.me.lng] : LS.get('last', [40.9909, 29.0303]), 14);
     S.jobLayer = L.layerGroup().addTo(S.map);
+    const tb = YK.mapTypeButton(S.map);
+    tb.style.top = 'calc(130px + var(--safe-t))';
+    $('#homeScreen').appendChild(tb);
     S.offerLayer = L.layerGroup().addTo(S.map);
     connect();
     updateOnlineUI();
@@ -298,7 +302,8 @@
     const j = S.job;
     const s = S.cfg.services[j.service];
     const target = j.status === 'towing' ? j.dropoff : j.pickup;
-    const next = {
+    const needPin = j.status === 'arrived' && !j.verified;
+    const next = needPin ? null : {
       accepted: ['arrived', 'Konuma vardım'],
       arrived: j.dropoff ? ['towing', 'Aracı yükledim, yola çıkıyorum'] : ['servicing', 'Yol yardımına başla'],
       towing: ['completed', 'Teslim ettim · İşi tamamla'],
@@ -318,7 +323,12 @@
         ${j.dropoff ? `<div class="row" style="margin-top:8px"><span>${I.nav}</span><span class="grow">${h(j.dropoff.address)} · ${j.distanceKm} km</span></div>` : ''}
         ${j.note ? `<div class="muted" style="margin-top:8px">Not: “${h(j.note)}”</div>` : ''}
       </div>
+      ${needPin ? `
+        <div class="pin-info"><span>${I.shield}</span><div class="grow"><b>Eşleşme kodu gerekli</b><div class="small">Müşteriden 4 haneli eşleşme kodunu isteyin. Kod doğrulanmadan araç yüklenemez ve iş tamamlanamaz.</div></div></div>
+        <button class="btn amber" id="pinBtn" style="margin-top:10px">${I.shield} Eşleşme kodunu gir</button>`
+        : j.status !== 'accepted' && j.verified ? `<div class="pin-ok">${I.shield}<span>Eşleşme doğrulandı</span></div>` : ''}
       ${next ? `<button class="btn ${next[0] === 'completed' ? 'dark' : ''}" id="nextBtn" style="margin-top:12px">${next[1]}</button>` : ''}`);
+    $('#pinBtn') && ($('#pinBtn').onclick = () => openPin(j));
     $('#cCall').onclick = async () => {
       if (perms.call() !== 'granted') { if (!(await confirmBox('Arama izni', 'Müşteriyi telefon uygulamanız üzerinden aramak için izin verin.', 'İzin ver ve ara'))) return; perms.setCall('granted'); }
       location.href = 'tel:0' + j.customer.phone;
@@ -329,8 +339,57 @@
     });
     $('#nextBtn') && ($('#nextBtn').onclick = async () => {
       if (next[0] === 'completed' && !(await confirmBox('İşi tamamla', `Müşteriden ${tl(j.price.total)} tahsil ettiniz mi?`, 'Evet, tamamla'))) return;
-      try { const r = await api(`/jobs/${j.id}/status`, { body: { status: next[0] } }); setJob(r.job); } catch (e) { fail(e); }
+      try {
+        const r = await api(`/jobs/${j.id}/status`, { body: { status: next[0] } });
+        setJob(r.job);
+        if (r.job.status === 'arrived' && !r.job.verified) openPin(r.job);
+      } catch (e) { fail(e); }
     });
+  }
+
+  // Konuma varınca müşteriden alınan 4 haneli kod: kod olmadan eşleşme olmaz
+  function openPin(j) {
+    if (S.pinModal) S.pinModal.close();
+    const m = modal(`
+      <div class="center"><span class="pin-hero">${I.shield}</span>
+      <h3 style="margin:10px 0 4px">Eşleşme kodunu girin</h3>
+      <p class="muted small" style="margin:0 0 14px">${h(j.customer?.name || 'Müşteri')} uygulamasında görünen 4 haneli kodu size söyleyecek.</p></div>
+      <div class="pin-boxes" id="pinBoxes">${[0, 1, 2, 3].map(() => '<i></i>').join('')}</div>
+      <input id="pinIn" class="pin-input" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" maxlength="4" aria-label="Eşleşme kodu">
+      <p class="small center" id="pinErr" style="color:var(--red);min-height:20px;margin:10px 0 4px"></p>
+      <button class="btn" id="pinOk" disabled>Kodu doğrula</button>
+      <p class="tiny muted center" style="margin-top:10px">Kod müşteriyle doğru araçla eşleştiğinizi kanıtlar. Kodu telefonla değil yüz yüze alın.</p>`, { onClose: () => (S.pinModal = null) });
+    S.pinModal = m;
+    const input = $('#pinIn', m.el);
+    const boxes = $$('#pinBoxes i', m.el);
+    const paint = () => {
+      const v = input.value;
+      boxes.forEach((b, i) => { b.textContent = v[i] || ''; b.classList.toggle('on', i === Math.min(v.length, 3)); });
+      $('#pinOk', m.el).disabled = v.length !== 4;
+    };
+    const submit = async () => {
+      if (input.value.length !== 4) return;
+      $('#pinOk', m.el).disabled = true;
+      try {
+        const r = await api(`/jobs/${j.id}/verify`, { body: { pin: input.value } });
+        m.close();
+        toast('Eşleşme doğrulandı ✅', j.dropoff ? 'Aracı yükleyip yola çıkabilirsiniz.' : 'Yol yardımına başlayabilirsiniz.');
+        setJob(r.job);
+      } catch (e) {
+        $('#pinErr', m.el).textContent = e.message;
+        m.el.querySelector('.pin-boxes').classList.remove('shake');
+        void m.el.offsetWidth;
+        m.el.querySelector('.pin-boxes').classList.add('shake');
+        navigator.vibrate && navigator.vibrate(200);
+        input.value = '';
+        paint();
+      }
+    };
+    input.oninput = () => { input.value = input.value.replace(/\D/g, '').slice(0, 4); $('#pinErr', m.el).textContent = ''; paint(); if (input.value.length === 4) submit(); };
+    $('#pinBoxes', m.el).onclick = () => input.focus();
+    $('#pinOk', m.el).onclick = submit;
+    paint();
+    setTimeout(() => input.focus(), 250);
   }
 
   // ---------------- Socket ----------------

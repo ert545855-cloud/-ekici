@@ -6,6 +6,7 @@
 
   async function boot() {
     S.cfg = await api('/config').catch(() => ({ services: {} }));
+    YK.initGoogle(S.cfg.googleMapsKey);
     if (auth.token) {
       try { const u = (await api('/me', { noLogout: true })).user; if (u.role === 'admin') return renderMain(); } catch {}
       auth.token = null;
@@ -60,6 +61,9 @@
     const j = await api('/admin/jobs');
     S.map = YK.createMap('amap', [41.0, 29.0], 10);
     S.layer = L.layerGroup().addTo(S.map);
+    const tb = YK.mapTypeButton(S.map);
+    tb.style.top = '12px';
+    $('#amap').parentElement.appendChild(tb);
     const pts = [];
     j.jobs.filter((x) => ['searching', 'accepted', 'arrived', 'towing', 'servicing'].includes(x.status)).forEach((x) => {
       L.marker([x.pickup.lat, x.pickup.lng], { icon: YK.pinIcon(x.status === 'searching' ? 'amber' : '') }).bindPopup(`<b>${x.no}</b> · ${h(x.customer?.name)}<br>${statusBadge(x.status)} ${tl(x.price.total)}`).addTo(S.layer);
@@ -148,7 +152,7 @@
     const r = await api('/admin/jobs');
     C().innerHTML = `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>No</th><th>Hizmet</th><th>Müşteri</th><th>Çekici</th><th>Güzergah</th><th>Tutar</th><th>Durum</th><th>Tarih</th></tr></thead><tbody>
       ${r.jobs.map((j) => `<tr><td><b>${j.no}</b></td><td>${h(S.cfg.services[j.service]?.name)}</td><td>${h(j.customer?.name || '—')}</td><td>${h(j.driver?.name || '—')}${j.driver?.bot ? ' <span class="badge">demo</span>' : ''}</td>
-        <td class="small" style="max-width:260px">${h(j.pickup.address)}${j.dropoff ? ' → ' + h(j.dropoff.address) : ''}</td><td>${tl(j.price.total)}${j.price.code ? `<br><span class="tiny muted">${h(j.price.code.code)}</span>` : ''}</td><td>${statusBadge(j.status)}</td><td class="small">${dt(j.createdAt)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">Henüz talep yok</td></tr>'}
+        <td class="small" style="max-width:260px">${h(j.pickup.address)}${j.dropoff ? ' → ' + h(j.dropoff.address) : ''}</td><td>${tl(j.price.total)}${j.price.code ? `<br><span class="tiny muted">${h(j.price.code.code)}</span>` : ''}</td><td>${statusBadge(j.status)}${j.verified && !['searching', 'accepted', 'cancelled', 'expired'].includes(j.status) ? '<br><span class="badge green" style="margin-top:4px">kod ✓</span>' : ''}</td><td class="small">${dt(j.createdAt)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">Henüz talep yok</td></tr>'}
     </tbody></table></div>`;
   }
 

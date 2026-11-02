@@ -30,6 +30,7 @@
   async function boot() {
     YK.registerSW();
     try { S.cfg = await api('/config'); } catch { S.cfg = { services: {}, roadside: {} }; }
+    YK.initGoogle(S.cfg.googleMapsKey);
     if (auth.token) {
       try { S.user = (await api('/me', { noLogout: true })).user; } catch { auth.token = null; }
     }
@@ -166,6 +167,8 @@
     const start = S.center || last || { lat: 40.9909, lng: 29.0303 };
     S.map = YK.createMap('map', [start.lat, start.lng], 15);
     S.nearbyLayer = L.layerGroup().addTo(S.map);
+    S.typeBtn = YK.mapTypeButton(S.map);
+    $('#homeScreen').appendChild(S.typeBtn);
     S.jobLayer = L.layerGroup().addTo(S.map);
     positionPin();
     window.addEventListener('resize', positionPin);
@@ -191,6 +194,7 @@
     const y = Math.max(140, 70 + visible / 2);
     $('#cpin').style.top = y + 'px';
     $('#locBtn').style.top = Math.max(120, y - 10) + 'px';
+    if (S.typeBtn) S.typeBtn.style.top = Math.max(120, y - 10) + 54 + 'px';
     if (S.map) {
       S.map.invalidateSize();
     }
@@ -522,15 +526,23 @@
     const d = j.driver || {};
     const order = j.dropoff ? ['accepted', 'arrived', 'towing', 'completed'] : ['accepted', 'arrived', 'servicing', 'completed'];
     const idx = order.indexOf(j.status);
-    const title = { accepted: 'Çekiciniz yolda', arrived: 'Çekiciniz konumunuzda', towing: 'Aracınız çekiliyor', servicing: 'Yol yardımı yapılıyor' }[j.status];
-    const sub = { accepted: 'Aracınızın yanında güvenli bir yerde bekleyin', arrived: 'Çekici sizi arayabilir, telefonunuz açık olsun', towing: 'Varış noktasına canlı takip ediliyor', servicing: 'İşlem tamamlanınca bildirim alacaksınız' }[j.status];
+    const waitingPin = j.status === 'arrived' && !j.verified;
+    const title = { accepted: 'Çekiciniz yolda', arrived: waitingPin ? 'Çekiciniz geldi · kodu söyleyin' : 'Eşleşme doğrulandı', towing: 'Aracınız çekiliyor', servicing: 'Yol yardımı yapılıyor' }[j.status];
+    const sub = { accepted: 'Aracınızın yanında güvenli bir yerde bekleyin', arrived: waitingPin ? 'Plakayı kontrol edin, ardından eşleşme kodunu çekiciye söyleyin' : 'Çekici aracınızı hazırlıyor', towing: 'Varış noktasına canlı takip ediliyor', servicing: 'İşlem tamamlanınca bildirim alacaksınız' }[j.status];
     setSheet(`
       <div class="row between" style="margin-top:4px">
         <div class="grow"><div class="bold" style="font-size:19px">${title}</div><div class="small muted">${sub}</div></div>
         ${j.status === 'accepted' || j.status === 'towing' ? `<div class="eta-pill"><b id="etaVal">${j.eta || '–'}</b><span>dakika</span></div>` : ''}
       </div>
       <div class="steps">${order.map((s, i) => `<div class="s ${i < idx ? 'on' : i === idx ? 'now' : ''}"></div>`).join('')}</div>
-      <div class="driver-card">
+      ${j.pin && ['accepted', 'arrived'].includes(j.status) && !j.verified ? `
+        <div class="pin-card ${waitingPin ? 'live' : ''}">
+          <div class="grow"><div class="tiny bold" style="opacity:.75;letter-spacing:.06em">EŞLEŞME KODUNUZ</div>
+          <div class="small" style="opacity:.85;margin-top:2px">${waitingPin ? 'Kodu yalnızca plakası eşleşen çekiciye söyleyin' : 'Çekici geldiğinde bu kodu söyleyin. Kod olmadan aracınız teslim alınamaz.'}</div></div>
+          <div class="pin-digits">${j.pin.split('').map((c) => `<b>${c}</b>`).join('')}</div>
+        </div>` : ''}
+      ${j.verified && ['arrived', 'towing', 'servicing'].includes(j.status) ? `<div class="pin-ok">${I.shield}<span>Eşleşme doğrulandı · doğru çekici</span></div>` : ''}
+      <div class="driver-card" style="margin-top:12px">
         <div class="avatar">${initials(d.name)}</div>
         <div class="grow"><div class="bold">${h(d.name || 'Çekici')}</div><div class="small muted">${h(d.vehicle || svc.name)} · ★ ${d.rating ?? '5.0'}</div></div>
         <span class="plate">${h(d.plate || '')}</span>
@@ -615,7 +627,9 @@
         try {
           const res = await YK.geocode(q, S.pickup);
           $('#dres', m.el).innerHTML = res.length ? res.map((r, i) => `<button class="result" data-r="${i}">${I.pin}<span><b>${h(r.address.split(',')[0])}</b><br><span class="small muted">${h(r.full.split(',').slice(1, 4).join(','))}</span></span></button>`).join('') : '<div class="empty small">Sonuç bulunamadı. Haritadan seçmeyi deneyin.</div>';
-          $$('[data-r]', m.el).forEach((b) => (b.onclick = () => { m.close(); cb(res[+b.dataset.r]); }));
+          $$('[data-r]', m.el).forEach((b) => (b.onclick = async () => {
+            try { const p = await YK.resolvePlace(res[+b.dataset.r]); m.close(); cb(p); } catch (e) { fail(new Error('Adres konumu alınamadı, haritadan seçmeyi deneyin')); }
+          }));
         } catch { $('#dres', m.el).innerHTML = '<div class="empty small">Arama şu an yapılamıyor. Haritadan seçebilirsiniz.</div>'; }
       }, 400);
     };

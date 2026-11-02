@@ -36,6 +36,11 @@ Martı TAG mantığında çalışan çekici çağırma uygulaması: müşteri ha
 - Çekiciler (paketi +30 gün uzat / durdur), müşteriler, talepler, ödemeler
 - Toplu bildirim gönderme (herkese / müşterilere / çekicilere)
 
+**Eşleşme kodu (güvenli teslim)**
+- Her talep için 4 haneli eşleşme kodu üretilir; kodu yalnızca müşteri görür (çekici ve yönetici göremez).
+- Çekici “Konuma vardım” dediğinde kod girme ekranı açılır. Kod doğrulanmadan araç yüklenemez, yol yardımı başlatılamaz ve iş tamamlanamaz.
+- 5 hatalı denemede kod 2 dakika kilitlenir ve müşteriye güvenlik uyarısı gider.
+
 **Bildirimler ve izinler**
 - Uygulama içi bildirim + Web Push (uygulama kapalıyken de gelir; VAPID anahtarları otomatik üretilir)
 - İlk açılışta Konum, Bildirim ve Arama izin ekranı; Ayarlar’dan yönetilebilir
@@ -66,6 +71,16 @@ Varsayılan: telefon `05000000000`, şifre `admin1234`. Render’da `ADMIN_PHONE
 | `DATA_DIR` | `./data` | Veritabanı dosyasının klasörü |
 | `SUPPORT_PHONE` | 4440000 | Uygulamadaki destek hattı |
 | `OFFER_RADIUS_KM` | 40 | Talebin iletileceği çekici yarıçapı |
+| `GOOGLE_MAPS_API_KEY` | — | Google Maps tarayıcı anahtarı. Boşsa OpenStreetMap kullanılır. |
+
+## Google Maps kurulumu
+
+1. [Google Cloud Console](https://console.cloud.google.com/)’da bir proje açın ve faturalandırmayı etkinleştirin.
+2. **APIs & Services → Library**’den şunları etkinleştirin: *Maps JavaScript API*, *Places API (New)*, *Geocoding API*, *Directions API*.
+3. **Credentials → Create credentials → API key** ile anahtar oluşturun. Anahtarı **HTTP referrer** ile kısıtlayın: `https://yolda-kaldik.onrender.com/*` (kendi alan adınızı da ekleyin).
+4. Render → servis → **Environment** bölümüne `GOOGLE_MAPS_API_KEY` olarak ekleyin.
+
+Anahtar tanımlıysa harita Google Maps olur (sağdaki düğmeyle Harita/Uydu), adres arama Google Places’tan, rota Google Directions’tan gelir. Herhangi bir API kapalıysa o özellik otomatik olarak OpenStreetMap karşılığına düşer.
 
 ## Yerelde çalıştırma
 
@@ -81,7 +96,7 @@ npm start
 - **Ödeme:** Paket ödemesi şu an simülasyondur (kart doğrulanır ama çekim yapılmaz). `server.js` içindeki `/api/driver/subscription` noktasına iyzico / PayTR entegrasyonu bağlanmalıdır.
 - **SMS doğrulama:** Kayıtta telefon numarası OTP ile doğrulanmıyor; canlıda eklenmeli.
 - `DEMO_MODE=false` yapın ve `YKDEMO` kodunu kapatın.
-- Harita döşemeleri CARTO, adres arama OpenStreetMap Nominatim, rota OSRM demo sunucusundan gelir. Yüksek trafikte kendi anahtarlı servisinize (ör. Google Maps, Mapbox) geçin.
+- Google Maps anahtarı tanımlanmazsa harita CARTO/OpenStreetMap, adres arama Nominatim, rota OSRM demo sunucusundan gelir; bunlar yüksek trafik için uygun değildir.
 
 ## Teknik yapı
 
