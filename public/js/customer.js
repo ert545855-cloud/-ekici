@@ -564,7 +564,7 @@
       S.driverMarker = L.marker([dr.lat, dr.lng], { icon: YK.truckIcon(true), zIndexOffset: 1000 }).addTo(S.jobLayer);
       pts.push([dr.lat, dr.lng]);
       const target = job.status === 'towing' ? job.dropoff : job.pickup;
-      if (target) YK.route({ lat: dr.lat, lng: dr.lng }, target).then((r) => S.mode === 'active' && L.polyline(r.coords, { color: '#18b45f', weight: 6, opacity: 0.9 }).addTo(S.jobLayer));
+      if (target) YK.route({ lat: dr.lat, lng: dr.lng }, target).then((r) => S.mode === 'active' && L.polyline(r.coords, { color: '#ea580c', weight: 6, opacity: 0.9 }).addTo(S.jobLayer));
     } else if (job.dropoff) {
       L.polyline(pts, { color: '#0b2b33', weight: 4, opacity: 0.6, dashArray: '8 8' }).addTo(S.jobLayer);
     }

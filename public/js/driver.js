@@ -343,7 +343,7 @@
     const pts = [[target.lat, target.lng]];
     if (S.me) {
       pts.push([S.me.lat, S.me.lng]);
-      YK.route(S.me, target).then((r) => S.job && L.polyline(r.coords, { color: '#18b45f', weight: 6, opacity: 0.9 }).addTo(S.jobLayer));
+      YK.route(S.me, target).then((r) => S.job && L.polyline(r.coords, { color: '#ea580c', weight: 6, opacity: 0.9 }).addTo(S.jobLayer));
     }
     setTimeout(() => S.map.fitBounds(L.latLngBounds(pts).pad(0.3), { paddingTopLeft: [20, 90], paddingBottomRight: [20, $('#sheet').offsetHeight + 20], maxZoom: 16 }), 60);
   }

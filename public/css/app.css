@@ -2,9 +2,9 @@
 :root {
   --ink: #0b2b33;
   --ink-2: #134049;
-  --brand: #18b45f;
-  --brand-2: #0f8c48;
-  --brand-soft: #e3f7ec;
+  --brand: #ea580c;
+  --brand-2: #c2410c;
+  --brand-soft: #ffedd5;
   --amber: #ffb23f;
   --amber-soft: #fff3df;
   --red: #e5484d;
@@ -33,7 +33,7 @@
     --text: #e9f0ef;
     --muted: #93a4a7;
     --line: #23363a;
-    --brand-soft: #123a26;
+    --brand-soft: #3a1e0c;
     --amber-soft: #3a2d14;
     --red-soft: #3a1a1b;
     --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
@@ -48,7 +48,7 @@
   --text: #e9f0ef;
   --muted: #93a4a7;
   --line: #23363a;
-  --brand-soft: #123a26;
+  --brand-soft: #3a1e0c;
   --amber-soft: #3a2d14;
   --red-soft: #3a1a1b;
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
@@ -357,8 +357,8 @@ a { color: var(--brand-2); }
 .online-toggle .st { font-size: 14px; }
 .online-toggle.on .st { color: var(--brand-2); }
 .live-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
-.on .live-dot { background: var(--brand); box-shadow: 0 0 0 0 rgba(24,180,95,.6); animation: pulse 1.6s infinite; }
-@keyframes pulse { 70% { box-shadow: 0 0 0 10px rgba(24,180,95,0); } 100% { box-shadow: 0 0 0 0 rgba(24,180,95,0); } }
+.on .live-dot { background: var(--brand); box-shadow: 0 0 0 0 rgba(234, 88, 12,.6); animation: pulse 1.6s infinite; }
+@keyframes pulse { 70% { box-shadow: 0 0 0 10px rgba(234, 88, 12,0); } 100% { box-shadow: 0 0 0 0 rgba(234, 88, 12,0); } }
 
 table.tbl { width: 100%; border-collapse: collapse; font-size: 14px; }
 .tbl th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 700; padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
@@ -406,7 +406,7 @@ a.btn { text-decoration: none; }
 .svc[data-s='yol'] .pic img { max-height: 74px; }
 .svc .name { font-size: 16.5px; letter-spacing: .005em; line-height: 1.15; }
 .svc .desc { font-size: 13px; color: var(--text); opacity: .78; }
-.svc .eta { top: 10px; right: 10px; display: inline-flex; align-items: center; gap: 3px; padding: 4px 8px 4px 6px; box-shadow: 0 2px 6px rgba(24, 180, 95, .35); z-index: 1; }
+.svc .eta { top: 10px; right: 10px; display: inline-flex; align-items: center; gap: 3px; padding: 4px 8px 4px 6px; box-shadow: 0 2px 6px rgba(234, 88, 12, .35); z-index: 1; }
 .svc .eta svg { width: 13px; height: 13px; }
 .svc .eta.none { box-shadow: none; padding: 4px 8px; }
 .thumb { width: 64px; height: 46px; display: grid; place-items: center; background: var(--stage); border-radius: 12px; flex: none; }
