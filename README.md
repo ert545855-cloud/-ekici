@@ -71,7 +71,14 @@ Varsayılan: telefon `05000000000`, şifre `admin1234`. Render’da `ADMIN_PHONE
 | `DATA_DIR` | `./data` | Veritabanı dosyasının klasörü |
 | `SUPPORT_PHONE` | 4440000 | Uygulamadaki destek hattı |
 | `OFFER_RADIUS_KM` | 40 | Talebin iletileceği çekici yarıçapı |
-| `GOOGLE_MAPS_API_KEY` | — | Google Maps tarayıcı anahtarı. Boşsa OpenStreetMap kullanılır. |
+| `MAPBOX_TOKEN` | — | Mapbox public token (`pk.` ile başlar). Harita, adres arama ve rota için. |
+| `GOOGLE_MAPS_API_KEY` | — | Google Maps tarayıcı anahtarı. Tanımlıysa Mapbox yerine Google kullanılır. |
+
+Harita sağlayıcı önceliği: **Google Maps → Mapbox → OpenStreetMap**. Bir sağlayıcı hata verirse (geçersiz anahtar, kota vb.) sıradakine otomatik geçilir.
+
+## Mapbox
+
+`MAPBOX_TOKEN` tanımlıysa harita Mapbox Streets (koyu temada Mapbox Dark, uydu düğmesiyle Satellite Streets), adres arama Mapbox Search Box, adres bulma Mapbox Geocoding v6, rota Mapbox Directions (trafik dahil) ile çalışır. Güvenlik için [Mapbox hesabınızda](https://account.mapbox.com/access-tokens/) token'ı **URL kısıtlaması** ile yalnızca `https://yolda-kaldik.onrender.com` adresine izin verecek şekilde sınırlayın.
 
 ## Google Maps kurulumu
 

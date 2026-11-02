@@ -6,7 +6,7 @@
 
   async function boot() {
     S.cfg = await api('/config').catch(() => ({ services: {} }));
-    YK.initGoogle(S.cfg.googleMapsKey);
+    YK.initMaps(S.cfg);
     if (auth.token) {
       try { const u = (await api('/me', { noLogout: true })).user; if (u.role === 'admin') return renderMain(); } catch {}
       auth.token = null;

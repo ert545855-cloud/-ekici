@@ -194,7 +194,17 @@
     { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#22343a' }] },
   ];
   const G = { ok: false, ready: null, maps: new Set(), session: null };
+  // Mapbox: Google anahtarı yoksa harita, adres arama ve rota sağlayıcısı
+  const MB = { token: '', failed: false, session: null };
   const gmapsReady = () => G.ok;
+  const provider = () => (G.ok ? 'google' : MB.token && !MB.failed ? 'mapbox' : 'osm');
+
+  // Uygulama açılışında config ile çağrılır
+  function initMaps(cfg = {}) {
+    MB.token = cfg.mapboxToken || '';
+    G.maps.forEach((m) => setBase(m, m._ykType || 'roadmap'));
+    return initGoogle(cfg.googleMapsKey);
+  }
 
   // Google Maps JavaScript API'yi yükler (Maps + Places + Geocoding + Directions)
   function initGoogle(key) {
@@ -204,8 +214,8 @@
       window.__ykGm = () => res(!!(window.google && google.maps));
       window.gm_authFailure = () => {
         G.ok = false;
-        G.maps.forEach((m) => setBase(m, 'osm'));
-        toast('Google Haritalar açılamadı', 'API anahtarı geçersiz veya bu alan adına izinli değil. Açık harita kullanılıyor.', true);
+        G.maps.forEach((m) => setBase(m, m._ykType || 'roadmap'));
+        toast('Google Haritalar açılamadı', 'API anahtarı geçersiz veya bu alan adına izinli değil. Yedek harita kullanılıyor.', true);
       };
       const s = document.createElement('script');
       s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&loading=async&libraries=places,geocoding,routes&language=tr&region=TR&callback=__ykGm`;
@@ -215,32 +225,50 @@
       setTimeout(() => res(false), 12000);
     }).then((ok) => {
       G.ok = ok && !!(L.gridLayer && L.gridLayer.googleMutant);
-      if (G.ok) G.maps.forEach((m) => setBase(m, m._ykType === 'osm' ? 'roadmap' : m._ykType));
-      document.documentElement.classList.toggle('gmaps', G.ok);
+      if (G.ok) G.maps.forEach((m) => setBase(m, m._ykType || 'roadmap'));
       return G.ok;
     });
     return G.ready;
   }
-  function setBase(map, type) {
+
+  const MB_ATTR = '© <a href="https://www.mapbox.com/about/maps/" target="_blank" rel="noopener">Mapbox</a> © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> <a href="https://www.mapbox.com/map-feedback/" target="_blank" rel="noopener"><b>Haritayı geliştir</b></a>';
+  function mapboxLayer(type) {
+    const style = type === 'hybrid' ? 'satellite-streets-v12' : isDark() ? 'dark-v11' : 'streets-v12';
+    const layer = L.tileLayer(`https://api.mapbox.com/styles/v1/mapbox/${style}/tiles/512/{z}/{x}/{y}@2x?access_token=${encodeURIComponent(MB.token)}&language=tr`, {
+      tileSize: 512, zoomOffset: -1, maxZoom: 21, attribution: MB_ATTR,
+    });
+    // Token geçersizse (401/403) birkaç başarısız döşemeden sonra açık haritaya düş
+    let okCount = 0, errCount = 0;
+    layer.on('tileload', () => okCount++);
+    layer.on('tileerror', () => {
+      if (okCount || MB.failed || ++errCount < 4) return;
+      MB.failed = true;
+      G.maps.forEach((m) => setBase(m, 'roadmap'));
+      toast('Mapbox haritası açılamadı', 'Erişim anahtarı geçersiz veya bu alan adına izinli değil. Açık harita kullanılıyor.', true);
+    });
+    return layer;
+  }
+  function setBase(map, type = 'roadmap') {
     if (map._ykBase) map.removeLayer(map._ykBase);
-    if (type !== 'osm' && G.ok) {
-      map._ykBase = L.gridLayer.googleMutant({ type, maxZoom: 21, styles: type === 'roadmap' && isDark() ? GM_DARK : undefined }).addTo(map);
-    } else {
-      type = 'osm';
-      map._ykBase = L.tileLayer(isDark() ? TILE_DARK : TILE, { maxZoom: 19, subdomains: 'abcd', attribution: '© OpenStreetMap © CARTO' }).addTo(map);
-    }
+    const prov = provider();
+    if (prov === 'osm') type = 'roadmap';
+    if (prov === 'google') map._ykBase = L.gridLayer.googleMutant({ type, maxZoom: 21, styles: type === 'roadmap' && isDark() ? GM_DARK : undefined });
+    else if (prov === 'mapbox') map._ykBase = mapboxLayer(type);
+    else map._ykBase = L.tileLayer(isDark() ? TILE_DARK : TILE, { maxZoom: 19, subdomains: 'abcd', attribution: '© OpenStreetMap © CARTO' });
+    map._ykBase.addTo(map);
     map._ykType = type;
-    map.fire('yk:basechange', { type });
+    map._ykProv = prov;
+    map.fire('yk:basechange', { type, provider: prov });
   }
   function createMap(el, center = [40.9909, 29.0303], zoom = 13) {
     const map = L.map(el, { zoomControl: false, attributionControl: true, maxZoom: 20 }).setView(center, zoom);
     G.maps.add(map);
-    setBase(map, G.ok ? 'roadmap' : 'osm');
+    setBase(map, 'roadmap');
     return map;
   }
-  // Harita ↔ Uydu (yalnızca Google Maps açıkken)
+  // Harita ↔ Uydu (Google veya Mapbox açıkken)
   function toggleMapType(map) {
-    if (!G.ok) return;
+    if (provider() === 'osm') return;
     setBase(map, map._ykType === 'hybrid' ? 'roadmap' : 'hybrid');
   }
   function mapTypeButton(map, extraClass = '') {
@@ -248,7 +276,7 @@
     b.className = 'icon-btn maptype-btn ' + extraClass;
     b.setAttribute('aria-label', 'Harita türü');
     const paint = () => {
-      b.classList.toggle('hidden', !G.ok);
+      b.classList.toggle('hidden', provider() === 'osm');
       b.innerHTML = map._ykType === 'hybrid' ? I.mapIco : I.satIco;
       b.title = map._ykType === 'hybrid' ? 'Harita görünümü' : 'Uydu görünümü';
     };
@@ -256,6 +284,14 @@
     map.on('yk:basechange', paint);
     paint();
     return b;
+  }
+  const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => ((Math.random() * 16) | (c === 'x' ? 0 : 8)).toString(16)));
+  async function mbFetch(url) {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 6000);
+    const r = await fetch(url + (url.includes('?') ? '&' : '?') + 'access_token=' + encodeURIComponent(MB.token), { signal: ctrl.signal });
+    if (!r.ok) throw new Error('Mapbox ' + r.status);
+    return r.json();
   }
 
   const truckIcon = (me = false) =>
@@ -273,6 +309,13 @@
         const leg = rt.legs[0];
         return { coords: rt.overview_path.map((p) => [p.lat(), p.lng()]), km: leg.distance.value / 1000, min: (leg.duration_in_traffic || leg.duration).value / 60, google: true };
       } catch (e) { console.warn('Google rota alınamadı:', e.message || e); }
+    }
+    if (provider() === 'mapbox') {
+      try {
+        const j = await mbFetch(`https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${a.lng},${a.lat};${b.lng},${b.lat}?geometries=geojson&overview=full&language=tr`);
+        const rt = j.routes && j.routes[0];
+        if (rt) return { coords: rt.geometry.coordinates.map(([x, y]) => [y, x]), km: rt.distance / 1000, min: rt.duration / 60, mapbox: true };
+      } catch (e) { console.warn('Mapbox rota alınamadı:', e.message || e); }
     }
     try {
       const ctrl = new AbortController();
@@ -310,6 +353,26 @@
         });
       } catch (e) { console.warn('Google Places kullanılamadı:', e.message || e); }
     }
+    if (provider() === 'mapbox') {
+      try {
+        if (!MB.session) MB.session = uuid();
+        const prox = near ? `&proximity=${near.lng},${near.lat}` : '';
+        const j = await mbFetch(`https://api.mapbox.com/search/searchbox/v1/suggest?q=${encodeURIComponent(q)}&language=tr&country=tr&limit=7${prox}&session_token=${MB.session}`);
+        return (j.suggestions || []).map((x) => ({
+          address: x.name,
+          full: [x.name, x.place_formatted || x.full_address].filter(Boolean).join(', '),
+          async resolve() {
+            const r = await mbFetch(`https://api.mapbox.com/search/searchbox/v1/retrieve/${encodeURIComponent(x.mapbox_id)}?session_token=${MB.session}&language=tr`);
+            MB.session = null; // oturum seçimle kapanır
+            const f = r.features && r.features[0];
+            if (!f) throw new Error('Konum bulunamadı');
+            const [lng, lat] = f.geometry.coordinates;
+            const sub = (f.properties.place_formatted || f.properties.full_address || '').split(',').slice(0, 2).join(',');
+            return { lat, lng, address: [f.properties.name || x.name, sub].filter(Boolean).join(', ') };
+          },
+        }));
+      } catch (e) { console.warn('Mapbox arama kullanılamadı:', e.message || e); }
+    }
     const u = new URL('https://nominatim.openstreetmap.org/search');
     u.search = new URLSearchParams({ format: 'jsonv2', q, countrycodes: 'tr', limit: '7', 'accept-language': 'tr', addressdetails: '0' });
     if (near) u.searchParams.set('viewbox', `${near.lng - 0.6},${near.lat + 0.4},${near.lng + 0.6},${near.lat - 0.4}`);
@@ -334,6 +397,16 @@
           s = [get('route'), get('neighborhood', 'sublocality_level_1', 'administrative_area_level_4'), get('administrative_area_level_2', 'locality')].filter(Boolean).join(', ') || results[0].formatted_address;
         }
       } catch (e) { console.warn('Google Geocoding kullanılamadı:', e.message || e); }
+    }
+    if (!s && provider() === 'mapbox') {
+      try {
+        const j = await mbFetch(`https://api.mapbox.com/search/geocode/v6/reverse?longitude=${p.lng}&latitude=${p.lat}&language=tr&limit=1`);
+        const f = j.features && j.features[0];
+        if (f) {
+          const c = f.properties.context || {};
+          s = [c.address?.name || c.street?.name, c.neighborhood?.name || c.locality?.name, c.place?.name].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(', ') || f.properties.full_address || f.properties.name;
+        }
+      } catch (e) { console.warn('Mapbox adres bulunamadı:', e.message || e); }
     }
     if (!s) {
       try {
@@ -382,5 +455,5 @@
   // Hizmet görselleri (müşteri tasarımındaki araç çizimleri)
   const svcImg = (k, cls = '') => `<img class="svc-img ${cls}" src="/img/svc-${k}.png" alt="" draggable="false">`;
 
-  window.YK = { $, $$, h, I, svcImg, api, auth, tl, dt, d8, phoneFmt, initials, STATUS, statusBadge, toast, fail, modal, confirmBox, perms, getPosition, registerSW, enablePush, showLocalNotification, connectSocket, createMap, initGoogle, gmapsReady, toggleMapType, mapTypeButton, truckIcon, pinIcon, meIcon, route, geocode, resolvePlace, reverseGeocode, alertSound, applyTheme };
+  window.YK = { $, $$, h, I, svcImg, api, auth, tl, dt, d8, phoneFmt, initials, STATUS, statusBadge, toast, fail, modal, confirmBox, perms, getPosition, registerSW, enablePush, showLocalNotification, connectSocket, createMap, initMaps, initGoogle, gmapsReady, toggleMapType, mapTypeButton, truckIcon, pinIcon, meIcon, route, geocode, resolvePlace, reverseGeocode, alertSound, applyTheme };
 })();

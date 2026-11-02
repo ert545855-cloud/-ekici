@@ -424,7 +424,7 @@ app.use('/vendor/leaflet', express.static(path.join(__dirname, 'node_modules', '
 
 app.get('/health', (req, res) => res.json({ ok: true, demo: DEMO_MODE }));
 app.get('/api/config', (req, res) =>
-  res.json({ services: P.SERVICES, roadside: P.ROADSIDE, subscriptionPrice: P.SUBSCRIPTION_PRICE, vapidPublicKey: db().meta.vapid.publicKey, demo: DEMO_MODE, googleMapsKey: process.env.GOOGLE_MAPS_API_KEY || '', support: process.env.SUPPORT_PHONE || '4440000' })
+  res.json({ services: P.SERVICES, roadside: P.ROADSIDE, subscriptionPrice: P.SUBSCRIPTION_PRICE, vapidPublicKey: db().meta.vapid.publicKey, demo: DEMO_MODE, googleMapsKey: process.env.GOOGLE_MAPS_API_KEY || '', mapboxToken: process.env.MAPBOX_TOKEN || '', support: process.env.SUPPORT_PHONE || '4440000' })
 );
 
 // --- Hesaplar ---

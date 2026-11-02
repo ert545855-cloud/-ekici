@@ -22,5 +22,7 @@ services:
         value: "05000000000"
       - key: ADMIN_PASSWORD
         sync: false
+      - key: MAPBOX_TOKEN
+        sync: false
       - key: GOOGLE_MAPS_API_KEY
         sync: false

@@ -11,7 +11,7 @@
   async function boot() {
     YK.registerSW();
     try { S.cfg = await api('/config'); } catch { S.cfg = { services: {}, roadside: {} }; }
-    YK.initGoogle(S.cfg.googleMapsKey);
+    YK.initMaps(S.cfg);
     if (auth.token) { try { S.user = (await api('/me', { noLogout: true })).user; } catch { auth.token = null; } }
     if (!S.user || S.user.role !== 'driver') { auth.token = null; return renderAuth(); }
     if (!LS.get('permsDone', false)) return renderPerms();
